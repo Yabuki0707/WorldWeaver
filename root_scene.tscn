@@ -1,0 +1,30 @@
+[gd_scene format=3 uid="uid://jgvu30nmxdrd"]
+
+[ext_resource type="Script" uid="uid://jkbpt5bhtmvn" path="res://src/print_node_tree.gd" id="1_c77vg"]
+[ext_resource type="Script" uid="uid://dhxamlaqv0xhb" path="res://src/Map System/Tile/TileTypeManagerWrapper.cs" id="1_itajj"]
+
+[node name="root_scene" type="Node" unique_id=1992669370]
+editor_description = "游戏的根场景
+The root scene of the game"
+
+[node name="game_base" type="Node2D" parent="." unique_id=999683339]
+
+[node name="ui_base" type="Control" parent="." unique_id=993430043]
+layout_mode = 3
+anchors_preset = 0
+offset_left = 35.0
+offset_top = 7.0
+offset_right = 75.0
+offset_bottom = 47.0
+
+[node name="info_base" type="Node" parent="." unique_id=1213825264]
+
+[node name="TileTypeManagerWrapper" type="Node" parent="info_base" unique_id=1372859210]
+script = ExtResource("1_itajj")
+metadata/_custom_type_script = "uid://dhxamlaqv0xhb"
+
+[node name="command_base" type="Node" parent="." unique_id=305447277]
+
+[node name="NodeTreePrinter" type="Node" parent="command_base" unique_id=1306188253]
+script = ExtResource("1_c77vg")
+metadata/_custom_type_script = "uid://jkbpt5bhtmvn"
