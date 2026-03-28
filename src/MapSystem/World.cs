@@ -1,8 +1,8 @@
 using Godot;
-using System;
 using System.Collections.Generic;
+using WorldWeaver.CounterSystem;
 
-namespace rasu.MapSystem
+namespace WorldWeaver.MapSystem
 {
     [GlobalClass]
     public partial class World : Node
@@ -14,7 +14,7 @@ namespace rasu.MapSystem
         /// <summary>
         /// World实例ID分配计数器
         /// </summary>
-        private static readonly Counter _idCounter = new("WorldIdCounter",null);
+        private static readonly Counter _idCounter = new("WorldIdCounter");
         
         /// <summary>
         /// World实例映射表，以ID为键存储所有World实例
@@ -39,9 +39,7 @@ namespace rasu.MapSystem
         /// <returns>对应的World实例，如果不存在则返回null</returns>
         public static World GetById(int id)
         {
-            if (_worldInstances.TryGetValue(id, out World value))// 尝试从映射中获取实例
-                return value;
-            return null;
+            return _worldInstances.GetValueOrDefault(id,null);
         }
 
 
