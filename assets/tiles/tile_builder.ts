@@ -2,7 +2,16 @@ import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline";
 
+// -----------------------------------------------------------------------------
+// 基础配置
+// -----------------------------------------------------------------------------
+
+// 输出目录：与当前脚本同目录（assets/tiles）
 const TILES_DIR = __dirname;
+
+// -----------------------------------------------------------------------------
+// 多语言文案结构
+// -----------------------------------------------------------------------------
 
 interface Messages {
   title: string;
@@ -17,7 +26,6 @@ interface Messages {
   isPassableError: string;
   exit: string;
   created: string;
-  rowLabel: string;
   fieldLabel: string;
   valueLabel: string;
   statusLabel: string;
@@ -28,6 +36,7 @@ interface Messages {
   continueHint: string;
 }
 
+// 英文共享文案（默认）
 const SHARED_MESSAGES: Messages = {
   title: "=== Tile Builder ===",
   exitHint: "Leave tile name empty to exit",
@@ -41,66 +50,90 @@ const SHARED_MESSAGES: Messages = {
   isPassableError: "Use t/f, true/false, y/n",
   exit: "Exited",
   created: "Created: ",
-  rowLabel: "Row",
   fieldLabel: "Field",
   valueLabel: "Value",
   statusLabel: "Status",
-  waiting: "Waiting",
-  editing: "Editing",
-  ready: "Done",
-  boolHint: "t/f",
+  waiting: "⏳ Waiting",
+  editing: "✍️ Editing",
+  ready: "✅ Done",
+  boolHint: "t/f/1/0",
   continueHint: "Press Enter to continue...",
 };
 
+// 多语言文案（已使用正常字符，不再使用 \uXXXX 转义）
 const MESSAGES: Record<string, Messages> = {
   zh: {
     title: "=== Tile Builder ===",
-    exitHint: "\u540d\u79f0\u7559\u7a7a\u5373\u53ef\u9000\u51fa",
-    saveHint: "\u6bcf\u884c\u4ee3\u8868\u4e00\u4e2a tile\uff0c\u5c5e\u6027\u4f1a\u5411\u4e0b\u586b\u5199",
-    inputHint: "\u8f93\u5165\u5f53\u524d\u5b57\u6bb5\u540e\u56de\u8f66\uff0c\u8f93\u5165\u9519\u8bef\u53ea\u5237\u65b0\u5f53\u524d\u884c",
-    tileName: "\u540d\u79f0",
-    tileNameError: "\u8bf7\u4f7f\u7528 snake_case\uff0c\u4f8b\u5982 deep_sea",
-    textureId: "\u7eb9\u7406ID",
-    textureIdError: "\u5fc5\u987b\u662f\u6574\u6570",
-    isPassable: "\u53ef\u901a\u884c",
-    isPassableError: "\u8bf7\u8f93\u5165 t/f\u3001true/false\u3001y/n",
-    exit: "\u5df2\u9000\u51fa",
-    created: "\u5df2\u521b\u5efa: ",
-    rowLabel: "\u884c",
-    fieldLabel: "\u5b57\u6bb5",
-    valueLabel: "\u503c",
-    statusLabel: "\u72b6\u6001",
-    waiting: "\u5f85\u8f93\u5165",
-    editing: "\u8f93\u5165\u4e2d",
-    ready: "\u5b8c\u6210",
-    boolHint: "t/f",
-    continueHint: "\u6309\u56de\u8f66\u7ee7\u7eed...",
+    exitHint: "名称留空即可退出",
+    saveHint: "每行代表一个 tile，属性会向下填写",
+    inputHint: "输入当前字段后回车，输入错误只刷新当前行",
+    tileName: "名称",
+    tileNameError: "请使用 snake_case，例如 deep_sea",
+    textureId: "纹理ID",
+    textureIdError: "必须是整数",
+    isPassable: "可通行",
+    isPassableError: "请输入 t/f、true/false、y/n、1/0、yeah",
+    exit: "已退出",
+    created: "已创建: ",
+    fieldLabel: "字段",
+    valueLabel: "值",
+    statusLabel: "状态",
+    waiting: "⏳ 待输入",
+    editing: "✍️ 输入中",
+    ready: "✅ 完成",
+    boolHint: "t/f/1/0",
+    continueHint: "按回车继续...",
+  },
+  zh_tw: {
+    title: "=== Tile Builder ===",
+    exitHint: "名稱留空即可退出",
+    saveHint: "每行代表一個 tile，屬性會向下填寫",
+    inputHint: "輸入當前欄位後按 Enter，輸入錯誤只刷新當前行",
+    tileName: "名稱",
+    tileNameError: "請使用 snake_case，例如 deep_sea",
+    textureId: "紋理ID",
+    textureIdError: "必須是整數",
+    isPassable: "可通行",
+    isPassableError: "請輸入 t/f、true/false、y/n、1/0、yeah",
+    exit: "已退出",
+    created: "已建立: ",
+    fieldLabel: "欄位",
+    valueLabel: "值",
+    statusLabel: "狀態",
+    waiting: "⏳ 待輸入",
+    editing: "✍️ 輸入中",
+    ready: "✅ 完成",
+    boolHint: "t/f/1/0",
+    continueHint: "按 Enter 繼續...",
   },
   en: SHARED_MESSAGES,
   ja: {
     title: "=== Tile Builder ===",
-    exitHint: "\u540d\u524d\u3092\u7a7a\u6b04\u306b\u3059\u308b\u3068\u7d42\u4e86",
-    saveHint: "1 \u884c\u304c 1 \u3064\u306e tile \u3067\u3001\u5c5e\u6027\u306f\u4e0b\u306b\u5411\u304b\u3063\u3066\u5165\u529b\u3057\u307e\u3059",
-    inputHint: "\u73fe\u5728\u306e\u9805\u76ee\u3092 Enter \u3067\u78ba\u5b9a\u3001\u30a8\u30e9\u30fc\u306f\u305d\u306e\u884c\u3060\u3051\u518d\u63cf\u753b\u3057\u307e\u3059",
-    tileName: "\u540d\u524d",
-    tileNameError: "deep_sea \u306e\u3088\u3046\u306a snake_case \u3092\u4f7f\u3063\u3066\u304f\u3060\u3055\u3044",
-    textureId: "\u30c6\u30af\u30b9\u30c1\u30e3ID",
-    textureIdError: "\u6574\u6570\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044",
-    isPassable: "\u901a\u884c\u53ef",
-    isPassableError: "t/f\u3001true/false\u3001y/n \u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044",
-    exit: "\u7d42\u4e86\u3057\u307e\u3057\u305f",
-    created: "\u4f5c\u6210: ",
-    rowLabel: "\u884c",
-    fieldLabel: "\u9805\u76ee",
-    valueLabel: "\u5024",
-    statusLabel: "\u72b6\u614b",
-    waiting: "\u5f85\u6a5f",
-    editing: "\u5165\u529b\u4e2d",
-    ready: "\u5b8c\u4e86",
-    boolHint: "t/f",
-    continueHint: "Enter \u3067\u7d9a\u884c...",
+    exitHint: "名前を空欄にすると終了",
+    saveHint: "1 行が 1 つの tile で、属性は下に向かって入力します",
+    inputHint: "現在の項目を Enter で確定、エラーはその行だけ再描画します",
+    tileName: "名前",
+    tileNameError: "deep_sea のような snake_case を使ってください",
+    textureId: "テクスチャ ID",
+    textureIdError: "整数を入力してください",
+    isPassable: "通行可",
+    isPassableError: "t/f、true/false、y/n、1/0、yeah を入力してください",
+    exit: "終了しました",
+    created: "作成: ",
+    fieldLabel: "項目",
+    valueLabel: "値",
+    statusLabel: "状態",
+    waiting: "⏳ 待機",
+    editing: "✍️ 入力中",
+    ready: "✅ 済",
+    boolHint: "t/f/1/0",
+    continueHint: "Enter で続行...",
   },
 };
+
+// -----------------------------------------------------------------------------
+// 数据结构
+// -----------------------------------------------------------------------------
 
 interface TileData {
   tileTypeName: string;
@@ -109,11 +142,21 @@ interface TileData {
 }
 
 interface TableRow {
-  rowNumber: number;
   field: string;
   value: string;
   status: string;
 }
+
+// 字段名称前缀 emoji（用于提升输入界面的可读性）
+const FIELD_EMOJI = {
+  tileName: "🧱",
+  textureId: "🖼️",
+  isPassable: "🚶",
+} as const;
+
+// -----------------------------------------------------------------------------
+// 基础校验与转换
+// -----------------------------------------------------------------------------
 
 function isSnakeCase(name: string): boolean {
   return /^[a-z][a-z0-9_]*$/.test(name);
@@ -121,8 +164,8 @@ function isSnakeCase(name: string): boolean {
 
 function parseBool(value: string): boolean | null {
   const normalized = value.trim().toLowerCase();
-  if (["t", "true", "y", "yes"].includes(normalized)) return true;
-  if (["f", "false", "n", "no"].includes(normalized)) return false;
+  if (["t", "true", "y", "yes", "1", "yeah"].includes(normalized)) return true;
+  if (["f", "false", "n", "no", "0"].includes(normalized)) return false;
   return null;
 }
 
@@ -133,6 +176,10 @@ function createTile(tileName: string, textureId: number, isPassable: boolean): T
     isPassable,
   };
 }
+
+// -----------------------------------------------------------------------------
+// 文件写入
+// -----------------------------------------------------------------------------
 
 // 保存单个 tile 配置，并同步追加到输出日志，方便批量录入后回看。
 function saveTile(tileData: TileData, lang: string): void {
@@ -148,15 +195,22 @@ function logTile(tileData: TileData): void {
   fs.appendFileSync(outputFile, line, "utf-8");
 }
 
+// -----------------------------------------------------------------------------
+// 交互输入
+// -----------------------------------------------------------------------------
+
 async function selectLanguage(rl: readline.ReadLine): Promise<string> {
-  console.log(
-    "language / \u8bed\u8a00 / \u8a00\u8a9e: [1] \u4e2d\u6587 [2] English [3] \u65e5\u672c\u8a9e"
-  );
+  console.log("language / 语言 / 語言 / 言語:");
+  console.log("[1] 简体中文");
+  console.log("[2] 繁體中文");
+  console.log("[3] English");
+  console.log("[4] 日本語");
   return new Promise((resolve) => {
     rl.question("> ", (choice) => {
       const selected = choice.trim();
       if (selected === "1") resolve("zh");
-      else if (selected === "3") resolve("ja");
+      else if (selected === "2") resolve("zh_tw");
+      else if (selected === "4") resolve("ja");
       else resolve("en");
     });
   });
@@ -168,16 +222,144 @@ function question(rl: readline.ReadLine, prompt: string): Promise<string> {
   });
 }
 
+// -----------------------------------------------------------------------------
+// 文本表格宽度处理（修复中日韩/emoji 导致的列错位）
+// -----------------------------------------------------------------------------
+
+// 手动读取下一个 Unicode 码点（兼容低编译目标，不依赖 /u 正则与 \p 字符类）
+function readCodePoint(value: string, startIndex: number): { codePoint: number; nextIndex: number; char: string } {
+  const first = value.charCodeAt(startIndex);
+  const hasNext = startIndex + 1 < value.length;
+  if (first >= 0xd800 && first <= 0xdbff && hasNext) {
+    const second = value.charCodeAt(startIndex + 1);
+    if (second >= 0xdc00 && second <= 0xdfff) {
+      const codePoint = ((first - 0xd800) << 10) + (second - 0xdc00) + 0x10000;
+      return {
+        codePoint,
+        nextIndex: startIndex + 2,
+        char: value.slice(startIndex, startIndex + 2),
+      };
+    }
+  }
+
+  return {
+    codePoint: first,
+    nextIndex: startIndex + 1,
+    char: value.charAt(startIndex),
+  };
+}
+
+// 是否为组合附加符号（近似处理）
+function isCombiningMark(codePoint: number): boolean {
+  return (
+    (codePoint >= 0x0300 && codePoint <= 0x036f) ||
+    (codePoint >= 0x1ab0 && codePoint <= 0x1aff) ||
+    (codePoint >= 0x1dc0 && codePoint <= 0x1dff) ||
+    (codePoint >= 0x20d0 && codePoint <= 0x20ff) ||
+    (codePoint >= 0xfe20 && codePoint <= 0xfe2f)
+  );
+}
+
+// 是否为全角字符（中日韩宽字符近似处理）
+function isFullWidth(codePoint: number): boolean {
+  return (
+    (codePoint >= 0x1100 && codePoint <= 0x115f) ||
+    (codePoint >= 0x2e80 && codePoint <= 0xa4cf) ||
+    (codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
+    (codePoint >= 0xf900 && codePoint <= 0xfaff) ||
+    (codePoint >= 0xfe10 && codePoint <= 0xfe19) ||
+    (codePoint >= 0xfe30 && codePoint <= 0xfe6f) ||
+    (codePoint >= 0xff00 && codePoint <= 0xff60) ||
+    (codePoint >= 0xffe0 && codePoint <= 0xffe6)
+  );
+}
+
+// 是否为 emoji（近似处理，覆盖常见 emoji 区段）
+function isEmoji(codePoint: number): boolean {
+  return (
+    (codePoint >= 0x1f300 && codePoint <= 0x1faff) ||
+    (codePoint >= 0x2600 && codePoint <= 0x27bf) ||
+    codePoint === 0xfe0f
+  );
+}
+
+// 计算单个 Unicode 字符的显示宽度（终端等宽字体近似规则）
+function codePointDisplayWidth(codePoint: number): number {
+  // 组合附加符号与变体选择符不占宽度
+  if (isCombiningMark(codePoint) || codePoint === 0xfe0f) {
+    return 0;
+  }
+
+  // emoji 按双宽处理
+  if (isEmoji(codePoint)) {
+    return 2;
+  }
+
+  // 全角字符按双宽处理（中日韩常见字符）
+  if (isFullWidth(codePoint)) {
+    return 2;
+  }
+
+  // 其余按单宽处理
+  return 1;
+}
+
+// 计算字符串显示宽度（用于表格对齐）
+function getDisplayWidth(value: string): number {
+  let width = 0;
+  let index = 0;
+
+  while (index < value.length) {
+    const unit = readCodePoint(value, index);
+    width += codePointDisplayWidth(unit.codePoint);
+    index = unit.nextIndex;
+  }
+
+  return width;
+}
+
+// 按“显示宽度”进行裁剪并补齐空格，避免 emoji 和中日韩字符挤乱表格
 function truncate(value: string, width: number): string {
-  if (value.length <= width) {
-    return value.padEnd(width, " ");
+  const fullWidth = getDisplayWidth(value);
+  if (fullWidth <= width) {
+    return value + " ".repeat(width - fullWidth);
   }
 
   if (width <= 3) {
-    return value.slice(0, width);
+    let result = "";
+    let used = 0;
+
+    let index = 0;
+    while (index < value.length) {
+      const unit = readCodePoint(value, index);
+      const charWidth = codePointDisplayWidth(unit.codePoint);
+      if (used + charWidth > width) break;
+      result += unit.char;
+      used += charWidth;
+      index = unit.nextIndex;
+    }
+
+    return result + " ".repeat(Math.max(0, width - used));
   }
 
-  return `${value.slice(0, width - 3)}...`;
+  const ellipsis = "...";
+  const ellipsisWidth = 3;
+  const targetWidth = width - ellipsisWidth;
+  let result = "";
+  let used = 0;
+
+  let index = 0;
+  while (index < value.length) {
+    const unit = readCodePoint(value, index);
+    const charWidth = codePointDisplayWidth(unit.codePoint);
+    if (used + charWidth > targetWidth) break;
+    result += unit.char;
+    used += charWidth;
+    index = unit.nextIndex;
+  }
+
+  const finalText = result + ellipsis;
+  return finalText + " ".repeat(Math.max(0, width - getDisplayWidth(finalText)));
 }
 
 function separator(widths: number[]): string {
@@ -189,8 +371,14 @@ function renderCell(value: string, width: number): string {
 }
 
 // 每次输入后整屏重绘，模拟“文本表格”输入界面。
-function renderTable(msg: Messages, rows: TableRow[], currentPrompt: string, inputValue: string, error = ""): void {
-  const widths = [6, 14, 24, 24];
+function renderTable(
+  msg: Messages,
+  rows: TableRow[],
+  currentPrompt: string,
+  inputValue: string,
+  error = ""
+): void {
+  const widths = [18, 24, 26];
   const lines: string[] = [];
   const border = separator(widths);
 
@@ -200,28 +388,29 @@ function renderTable(msg: Messages, rows: TableRow[], currentPrompt: string, inp
   lines.push(`${msg.exitHint}\n`);
   lines.push(border);
   lines.push(
-    `|${renderCell(msg.rowLabel, widths[0])}|${renderCell(msg.fieldLabel, widths[1])}|${renderCell(
-      msg.valueLabel,
+    `|${renderCell(msg.fieldLabel, widths[0])}|${renderCell(msg.valueLabel, widths[1])}|${renderCell(
+      msg.statusLabel,
       widths[2]
-    )}|${renderCell(msg.statusLabel, widths[3])}|`
+    )}|`
   );
   lines.push(border);
 
   for (const row of rows) {
     lines.push(
-      `|${renderCell(String(row.rowNumber), widths[0])}|${renderCell(row.field, widths[1])}|${renderCell(
-        row.value,
+      `|${renderCell(row.field, widths[0])}|${renderCell(row.value, widths[1])}|${renderCell(
+        row.status,
         widths[2]
-      )}|${renderCell(row.status, widths[3])}|`
+      )}|`
     );
   }
 
   lines.push(border);
-  lines.push(`${currentPrompt}: ${inputValue}`);
+  lines.push(`✍️ : ${currentPrompt}: ${inputValue}`);
   if (error) {
     lines.push(`! ${error}`);
   }
 
+  // 清屏后重绘（ANSI）
   process.stdout.write("\x1Bc");
   process.stdout.write(`${lines.join("\n")}\n`);
 }
@@ -259,9 +448,10 @@ async function promptField(
 async function promptTileName(rl: readline.ReadLine, msg: Messages, rows: TableRow[]): Promise<string | null> {
   let draft = "";
   let error = "";
+  const promptLabel = `${FIELD_EMOJI.tileName} ${msg.tileName}`;
 
   while (true) {
-    renderTable(msg, rows, msg.tileName, draft, error);
+    renderTable(msg, rows, promptLabel, draft, error);
     const input = (await question(rl, "> ")).trim();
 
     if (!input) {
@@ -280,6 +470,10 @@ async function promptTileName(rl: readline.ReadLine, msg: Messages, rows: TableR
   }
 }
 
+// -----------------------------------------------------------------------------
+// 主流程
+// -----------------------------------------------------------------------------
+
 async function main(): Promise<void> {
   const rl = readline.createInterface({
     input: process.stdin,
@@ -288,14 +482,14 @@ async function main(): Promise<void> {
 
   const lang = await selectLanguage(rl);
   const msg = MESSAGES[lang];
-  let rowNumber = 1;
 
   while (true) {
-    // 一个 tile 拆成三行，按属性向下录入；状态列用于显示“待输入 / 输入中 / 完成 / 错误”。
+    // 一个 tile 拆成三行，按属性向下录入；
+    // 状态列展示“待输入 / 输入中 / 完成 / 错误”。
     const rows: TableRow[] = [
-      { rowNumber, field: msg.tileName, value: "", status: msg.editing },
-      { rowNumber, field: msg.textureId, value: "", status: msg.waiting },
-      { rowNumber, field: msg.isPassable, value: "", status: `${msg.waiting} (${msg.boolHint})` },
+      { field: `${FIELD_EMOJI.tileName} ${msg.tileName}`, value: "", status: msg.editing },
+      { field: `${FIELD_EMOJI.textureId} ${msg.textureId}`, value: "", status: msg.waiting },
+      { field: `${FIELD_EMOJI.isPassable} ${msg.isPassable}`, value: "", status: `${msg.waiting} (${msg.boolHint})` },
     ];
 
     const tileName = await promptTileName(rl, msg, rows);
@@ -306,27 +500,34 @@ async function main(): Promise<void> {
     }
 
     rows[1].status = msg.editing;
-    const textureIdInput = await promptField(rl, msg, rows, 1, msg.textureId, (input) => {
+    const textureIdInput = await promptField(rl, msg, rows, 1, `${FIELD_EMOJI.textureId} ${msg.textureId}`, (input) => {
       return /^-?\d+$/.test(input) ? null : msg.textureIdError;
     });
     const textureId = parseInt(textureIdInput, 10);
 
     rows[2].status = msg.editing;
-    const passableInput = await promptField(rl, msg, rows, 2, msg.isPassable, (input) => {
-      return parseBool(input) === null ? msg.isPassableError : null;
-    });
-    const isPassable = parseBool(passableInput) as boolean;
+    const passableInput = await promptField(
+      rl,
+      msg,
+      rows,
+      2,
+      `${FIELD_EMOJI.isPassable} ${msg.isPassable}`,
+      (input) => {
+        return parseBool(input) === null ? msg.isPassableError : null;
+      }
+    );
+    const parsedPassable = parseBool(passableInput);
+    const isPassable = parsedPassable as boolean;
     rows[2].value = String(isPassable);
     rows[2].status = msg.ready;
 
     renderTable(msg, rows, "OK", "");
     saveTile(createTile(tileName, textureId, isPassable), lang);
 
-    rowNumber += 1;
     await question(rl, `\n${msg.continueHint}`);
   }
 
   rl.close();
 }
 
-main();
+void main();

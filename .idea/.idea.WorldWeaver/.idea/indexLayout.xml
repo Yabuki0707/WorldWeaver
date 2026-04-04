@@ -18,6 +18,7 @@
     </explicitIncludes>
     <explicitExcludes>
       <Path>addons/.venv</Path>
+      <Path>assets/tiles/tile_builder_output.txt</Path>
     </explicitExcludes>
   </component>
 </project>
