@@ -89,7 +89,7 @@
 
 - `ChunkCreated`：区块创建时触发
 - `ChunkRemoved`：区块移除时触发
-- `TileChanged`：Tile 数据变化时触发
+- `TilesChanged`：Tile 数据变化时触发，统一使用 `TileValueShape` 承载变化结果
 - `ChunkStateStableReached`：区块到达稳定状态时触发
 
 ### ChunkState（状态机引擎）

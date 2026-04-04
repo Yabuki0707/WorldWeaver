@@ -1,4 +1,4 @@
-using Godot;
+﻿using Godot;
 using System.Runtime.CompilerServices;
 
 namespace WorldWeaver.MapSystem.PositionConverter
@@ -10,42 +10,22 @@ namespace WorldWeaver.MapSystem.PositionConverter
     public static class GlobalPositionSizeExpConverter
     {
         // ================================================================================
-        //                                  ToLocalPositionByMark
+        //                                  ToLocalPosition
         // ================================================================================
 
         /// <summary>
         /// 根据尺寸掩码，将全局坐标转换为局部坐标。
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static Vector2I ToLocalPositionByMark(int globalX, int globalY, MapElementSize parentSize)
+        public static Vector2I ToLocalPosition(int globalX, int globalY, MapElementSize parentSize)
             => new(globalX & parentSize.WidthMask, globalY & parentSize.HeightMask);
 
         /// <summary>
         /// 根据尺寸掩码，将全局坐标转换为局部坐标。
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static Vector2I ToLocalPositionByMark(Vector2I globalPosition, MapElementSize parentSize)
-            => ToLocalPositionByMark(globalPosition.X, globalPosition.Y, parentSize);
-
-
-        // ================================================================================
-        //                                  ToLocalPositionByExp
-        // ================================================================================
-
-        /// <summary>
-        /// 根据尺寸指数，将全局坐标转换为局部坐标。
-        /// <para>对于 2 的幂尺寸，该实现等价于按掩码截取低位。</para>
-        /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static Vector2I ToLocalPositionByExp(int globalX, int globalY, MapElementSize parentSize)
-            => ToLocalPositionByMark(globalX, globalY, parentSize);
-
-        /// <summary>
-        /// 根据尺寸指数，将全局坐标转换为局部坐标。
-        /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static Vector2I ToLocalPositionByExp(Vector2I globalPosition, MapElementSize parentSize)
-            => ToLocalPositionByExp(globalPosition.X, globalPosition.Y, parentSize);
+        public static Vector2I ToLocalPosition(Vector2I globalPosition, MapElementSize parentSize)
+            => ToLocalPosition(globalPosition.X, globalPosition.Y, parentSize);
 
 
         // ================================================================================
@@ -98,18 +78,18 @@ namespace WorldWeaver.MapSystem.PositionConverter
         // ================================================================================
 
         /// <summary>
-        /// 根据父级全局坐标和尺寸指数，求出对应子级原点的全局坐标。
+        /// 根据本级 base 坐标与尺寸，求出对应子级原点（左上角）的全局坐标。
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static Vector2I ToOriginGlobalChildPosition(int globalParentX, int globalParentY, MapElementSize size)
-            => new(globalParentX << size.WidthExp, globalParentY << size.HeightExp);
+        public static Vector2I ToOriginGlobalChildPosition(int globalBaseX, int globalBaseY, MapElementSize size)
+            => new(globalBaseX << size.WidthExp, globalBaseY << size.HeightExp);
 
         /// <summary>
-        /// 根据父级全局坐标和尺寸指数，求出对应子级原点的全局坐标。
+        /// 根据本级 base 坐标与尺寸，求出对应子级原点（左上角）的全局坐标。
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static Vector2I ToOriginGlobalChildPosition(Vector2I globalParentPosition, MapElementSize size)
-            => ToOriginGlobalChildPosition(globalParentPosition.X, globalParentPosition.Y, size);
+        public static Vector2I ToOriginGlobalChildPosition(Vector2I globalBasePosition, MapElementSize size)
+            => ToOriginGlobalChildPosition(globalBasePosition.X, globalBasePosition.Y, size);
         
     }
 }

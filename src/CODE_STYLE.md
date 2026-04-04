@@ -1,6 +1,6 @@
 # 代码风格规定
 
-**版本：1.0**  
+**版本：1.1**  
 **出版时间：2026年3月22日**
 
 ## 1. 功能分组注释块
@@ -41,14 +41,19 @@
 - **公开字段**：`PascalCase`（如：`PublicField`）
 - **私有字段**：`_lowerCamelCase`（如：`_privateField`）
 - **公开静态字段**：`PascalCase`（如：`PublicStaticField`）
-- **私有静态字段**：`_lowerCamelCase`（如：`_privateStaticField`）
+- **私有静态字段**：`lowerCamelCase`（如：`privateStaticField`）
 - **总结**：私有的字段用 `_lowerCamelCase`，公开的字段用 `PascalCase`
+
+- **公开静态只读字段**：`ALL_UPPER`（如：`PUBLIC_STATIC_READONLY_FIELD`）
+- **私有静态只读字段**：`ALL_UPPER`（如：`PRIVATE_STATIC_READONLY_FIELD`）
+- **总结**：静态只读字段用 `ALL_UPPER`
 
 - **公开属性**：`PascalCase`（如：`PublicProperty`）
 - **私有属性**：`PascalCase`（如：`PrivateProperty`）
-- **公开静态属性**：`PascalCase`（如：`PublicStaticProperty`）
-- **私有静态属性**：`PascalCase`（如：`PrivateStaticProperty`）
-- **总结**：属性用 `PascalCase`
+- **公开静态非只读属性**：`PascalCase`（如：`PublicStaticProperty`）
+- **私有静态非只读属性**：`PascalCase`（如：`PrivateStaticProperty`）
+- **总结**：通常情况下的属性用 `PascalCase`
+
 
 - **事件**：`PascalCase`（如：`EventName`）
 - **方法**：`PascalCase`（如：`MethodName`）
@@ -67,18 +72,7 @@
 
 在与GDScript交互的包装类中，关于方法变量的命名采用 GDScript 的规范，即 `snake_case`（如：`gd_script_variable`）。
 
-
-## 4. 输出规范（Godot引擎）
-
-本项目为2D沙盒游戏，采用Godot引擎开发。**禁止使用** `Console.WriteLine`，该方法不会在Godot控制台中显示。
-
-应使用以下Godot API进行输出：
-
-- `GD.Print()` - 普通信息输出
-- `GD.PushError()` - 错误信息输出（红色显示）
-- `GD.PushWarning()` - 警告信息输出（黄色显示）
-
-## 5. 空行规范
+## 4. 空行规范
 
 用空行明晰结构与逻辑，提高代码可读性。
 
@@ -120,7 +114,7 @@ public World OwnerWorld => _ownerWorld;
 // 其他代码...
 ```
 
-## 6. 花括号规范
+## 5. 花括号规范
 
 在本项目中，所有控制语句（如 if、for、while、switch 等）和方法、类的花括号必须采用 Allman 风格，即左花括号 { 单独成行，并与对应的关键字对齐。
 

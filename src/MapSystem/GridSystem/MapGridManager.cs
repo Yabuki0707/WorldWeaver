@@ -186,7 +186,7 @@ namespace WorldWeaver.MapSystem.GridSystem
         private void OnChunkAdded(ChunkPosition cPosition)
         {
             // 计算区块所属的网格位置
-            MapGridPosition gridPos = cPosition.ToGridPosition(OwnerLayer.GridSizeExp);
+            MapGridPosition gridPos = cPosition.ToGridPosition(OwnerLayer.GridSize);
             // 尝试添加网格
             AddGrid(gridPos);
             // 增加网格区块计数

@@ -1,14 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="UserContentModel">
-    <attachedFolders />
+    <attachedFolders>
+      <Path>addons/PixelShapeSystem</Path>
+    </attachedFolders>
     <explicitIncludes>
       <Path>addons</Path>
+      <Path>assets/tiles/deep_sea.json</Path>
+      <Path>assets/tiles/grass.json</Path>
+      <Path>assets/tiles/sand.json</Path>
+      <Path>assets/tiles/shallow_sea.json</Path>
       <Path>assets/tiles/tile_builder.py</Path>
+      <Path>src/MapSystem/PixelShapeSystem/README.md</Path>
       <Path>src/MapSystem/PositionConverter/GlobalPositionSizeConverter.cs</Path>
       <Path>src/MapSystem/README.md</Path>
       <Path>src/MapSystem/World.cs.uid</Path>
     </explicitIncludes>
-    <explicitExcludes />
+    <explicitExcludes>
+      <Path>addons/.venv</Path>
+    </explicitExcludes>
   </component>
 </project>

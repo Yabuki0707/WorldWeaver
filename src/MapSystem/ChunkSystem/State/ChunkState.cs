@@ -10,7 +10,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
     /// <para>每个 Chunk 实例拥有一个 ChunkState 实例。</para>
     /// <para>负责驱动状态转换、计算路径、请求回调。</para>
     /// </summary>
-    public class ChunkState : IDisposable
+    public sealed class ChunkState : IDisposable
     {
 
 
@@ -316,7 +316,6 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
             // 清理托管资源
             ClearBlockedNodes();
             OwnerChunk = null;
-            GC.SuppressFinalize(this);
         }
     }
 }

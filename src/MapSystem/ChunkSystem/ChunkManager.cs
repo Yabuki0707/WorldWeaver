@@ -4,42 +4,25 @@ using System.Collections.Generic;
 using WorldWeaver.MapSystem.ChunkSystem.State;
 using WorldWeaver.MapSystem.LayerSystem;
 using WorldWeaver.MapSystem.TileSystem;
+using WorldWeaver.PixelShapeSystem;
 
 namespace WorldWeaver.MapSystem.ChunkSystem
 {
     /// <summary>
-    /// 单个 Tile 变化事件参数。
+    /// Tile 变化事件参数。
+    /// <para>事件统一使用 <see cref="TileValueShape"/> 承载变化点与变化后的 TileRunId。</para>
     /// </summary>
-    public class TileChangedEventArgs(ChunkPosition chunkPosition, Vector2I localPosition, int newTileId, TileChangeType changeType) : EventArgs
+    public class TilesChangedEventArgs(TileValueShape tileValueShape, TileChangeType changeType) : EventArgs
     {
-        /// <summary>区块坐标。</summary>
-        public ChunkPosition ChunkPosition { get; } = chunkPosition;
+        /// <summary>
+        /// 变化点形状与变化后的 TileRunId。
+        /// <para>其中坐标使用全局坐标。</para>
+        /// </summary>
+        public TileValueShape TileValueShape { get; } = tileValueShape;
 
-        /// <summary>区块内局部坐标。</summary>
-        public Vector2I LocalPosition { get; } = localPosition;
-
-        /// <summary>变化后的 Tile 类型 ID。</summary>
-        public int NewTileId { get; } = newTileId;
-
-        /// <summary>变化类型。</summary>
-        public TileChangeType ChangeType { get; } = changeType;
-    }
-
-    /// <summary>
-    /// 批量 Tile 变化事件参数。
-    /// </summary>
-    public class TilesBatchChangedEventArgs(ChunkPosition chunkPosition, Vector2I[] localPositions, int[] newTileIds, TileChangeType changeType) : EventArgs
-    {
-        /// <summary>区块坐标。</summary>
-        public ChunkPosition ChunkPosition { get; } = chunkPosition;
-
-        /// <summary>发生变化的局部坐标集合。</summary>
-        public Vector2I[] LocalPositions { get; } = localPositions;
-
-        /// <summary>变化后的 Tile 类型 ID 集合。</summary>
-        public int[] NewTileIds { get; } = newTileIds;
-
-        /// <summary>变化类型。</summary>
+        /// <summary>
+        /// 变化类型。
+        /// </summary>
         public TileChangeType ChangeType { get; } = changeType;
     }
 
@@ -48,19 +31,25 @@ namespace WorldWeaver.MapSystem.ChunkSystem
     /// </summary>
     public class ChunkStateStableReachedEventArgs(ChunkPosition chunkPosition, ChunkStateNode previousNode, ChunkStateNode newNode) : EventArgs
     {
-        /// <summary>区块坐标。</summary>
+        /// <summary>
+        /// Chunk 坐标。
+        /// </summary>
         public ChunkPosition ChunkPosition { get; } = chunkPosition;
 
-        /// <summary>变化前的稳定节点。</summary>
+        /// <summary>
+        /// 变化前的稳定节点。
+        /// </summary>
         public ChunkStateNode PreviousNode { get; } = previousNode;
 
-        /// <summary>变化后的稳定节点。</summary>
+        /// <summary>
+        /// 变化后的稳定节点。
+        /// </summary>
         public ChunkStateNode NewNode { get; } = newNode;
     }
 
     /// <summary>
-    /// 区块管理器，负责区块的创建、索引、移除与状态驱动。
-    /// 每个 MapLayer 拥有一个独立的 ChunkManager 实例。
+    /// Chunk 管理器，负责区块的创建、索引、移除与状态驱动。
+    /// <para>每个 MapLayer 拥有一个独立的 ChunkManager 实例。</para>
     /// </summary>
     public class ChunkManager
     {
@@ -89,14 +78,9 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         public event Action<ChunkPosition> ChunkRemoved;
 
         /// <summary>
-        /// 单个 Tile 变化事件。
+        /// Tile 变化事件。
         /// </summary>
-        public event EventHandler<TileChangedEventArgs> TileChanged;
-
-        /// <summary>
-        /// 批量 Tile 变化事件。
-        /// </summary>
-        public event EventHandler<TilesBatchChangedEventArgs> TilesBatchChanged;
+        public event EventHandler<TilesChangedEventArgs> TilesChanged;
 
         /// <summary>
         /// Chunk 状态到达稳定节点事件。
@@ -113,6 +97,12 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         /// </summary>
         public readonly MapLayer OwnerLayer;
 
+        /// <summary>
+        /// 区块数据操作员。
+        /// <para>负责全局 shape 到 ChunkData 索引操作的切片与执行。</para>
+        /// </summary>
+        public ChunkDataOperator DataOperator { get; }
+
 
         /*******************************
                   构造
@@ -125,6 +115,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         {
             OwnerLayer = owner;
             _chunks = new(128);
+            DataOperator = new ChunkDataOperator(this);
         }
 
 
@@ -157,7 +148,9 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         {
             long key = chunkPosition.ToKey();
             if (_chunks.ContainsKey(key))
+            {
                 return false;
+            }
 
             Chunk createdChunk = new(this, chunkPosition);
             _chunks[key] = createdChunk;
@@ -172,8 +165,10 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         public bool RemoveChunk(ChunkPosition chunkPosition)
         {
             long key = chunkPosition.ToKey();
-            if (_chunks.TryGetValue(key, out Chunk chunk) == false)
+            if (!_chunks.TryGetValue(key, out Chunk chunk))
+            {
                 return false;
+            }
 
             _chunks.Remove(key);
             _updatingChunks.Remove(chunk);
@@ -192,7 +187,9 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         public void Update()
         {
             if (_updatingChunks.Count == 0)
+            {
                 return;
+            }
 
             List<Chunk> toRemove = [];
             foreach (Chunk chunk in _updatingChunks)
@@ -212,16 +209,16 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         }
 
 
-        /*******************************
-                  Tile 查询
-        ********************************/
+        // ================================================================================
+        //                                  Tile 查询
+        // ================================================================================
 
         /// <summary>
         /// 检查指定全局 Tile 是否已加载。
         /// </summary>
-        public bool IsTileLoaded(GlobalTilePosition globalTilePosition)
+        public bool IsTileLoaded(Vector2I globalTilePosition)
         {
-            ChunkPosition chunkPos = globalTilePosition.ToChunkPosition(OwnerLayer.ChunkSizeExp);
+            ChunkPosition chunkPos = GlobalTilePositionConverter.ToChunkPosition(globalTilePosition, OwnerLayer.ChunkSize);
             long key = chunkPos.ToKey();
 
             if (_chunks.TryGetValue(key, out Chunk chunk))
@@ -235,38 +232,35 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         /// <summary>
         /// 获取指定全局 Tile 的信息；若未加载则返回 null。
         /// </summary>
-        public int? GetTileInfo(GlobalTilePosition globalTilePosition)
+        public int? GetTileInfo(Vector2I globalTilePosition)
         {
-            LocalTilePosition localTilePosition = globalTilePosition.ToLocalTilePosition(OwnerLayer.ChunkSizeExp, out ChunkPosition chunkPosition);
+            Vector2I localTilePosition =
+                GlobalTilePositionConverter.ToLocalTilePosition(globalTilePosition, OwnerLayer.ChunkSize, out ChunkPosition chunkPosition);
             long key = chunkPosition.ToKey();
-            if (_chunks.TryGetValue(key, out Chunk chunk) == false)
+            if (!_chunks.TryGetValue(key, out Chunk chunk))
+            {
                 return null;
+            }
 
             if (chunk.Data == null)
+            {
                 return null;
+            }
 
-            return chunk.Data.Tiles[localTilePosition.ToTileIndex(OwnerLayer.ChunkSizeExp)];
+            return chunk.Data.Tiles[LocalTilePositionConverter.ToTileIndex(localTilePosition, OwnerLayer.ChunkSize)];
         }
-
+        
 
         /*******************************
                   事件转发
         ********************************/
 
         /// <summary>
-        /// 触发单个 Tile 变化事件，供 Chunk 调用。
+        /// 触发 Tile 变化事件，供上层调用。
         /// </summary>
-        internal void OnTileChanged(TileChangedEventArgs args)
+        internal void OnTilesChanged(TilesChangedEventArgs args)
         {
-            TileChanged?.Invoke(this, args);
-        }
-
-        /// <summary>
-        /// 触发批量 Tile 变化事件，供 Chunk 调用。
-        /// </summary>
-        internal void OnTilesBatchChanged(TilesBatchChangedEventArgs args)
-        {
-            TilesBatchChanged?.Invoke(this, args);
+            TilesChanged?.Invoke(this, args);
         }
 
         /// <summary>

@@ -69,7 +69,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         {
             OwnerManager = ownerManager;
             CPosition = cPosition;    
-            State = new ChunkState(this);
+            State = new(this);
             State.SetFinalTarget(ChunkStateNode.NotInMemory); // 默认目标是待机状态
             // 生成UID (通过 Manager 访问 Layer)
             Uid = GenerateUid(ownerManager.OwnerLayer.WorldId, ownerManager.OwnerLayer.LayerId, cPosition);
@@ -141,43 +141,23 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         ********************************/
 
         /// <summary>
-        /// 使用有效的 Tile 数据初始化区块数据。
+        /// 设置有效的区块数据（如果数据无效或未初始化，则不设置并报错）
         /// </summary>
-        /// <param name="referenceTiles">要写入 ChunkData 的 Tile 数组。</param>
-        public bool InitializeValidChunkData(int[] referenceTiles)
+        /// <param name="setData">要设置的区块数据</param>
+        public bool InitializeValidChunkData(ChunkData setData)
         {
-            if (referenceTiles == null)
+            if (setData == null)
             {
-                GD.PushError($"Chunk {Uid}: 尝试初始化的 tile 数组为 null");
+                GD.PushError($"Chunk {Uid}: 尝试设置的ChunkData实例为 null");
+                return false;
+            }
+            if (setData.Width != OwnerManager.OwnerLayer.ChunkSize.Width || setData.Height != OwnerManager.OwnerLayer.ChunkSize.Height)
+            {
+                GD.PushError($"Chunk {Uid}: 尝试设置的ChunkData的尺寸不匹配。应为 {OwnerManager.OwnerLayer.ChunkSize},设置的实例大小为 ({setData.Width},{setData.Height})");
                 return false;
             }
 
-            ChunkManager ownerManager = OwnerManager;
-            var ownerLayer = ownerManager?.OwnerLayer;
-            MapElementSize chunkElementSize = ownerLayer?.ChunkElementSize;
-            if (chunkElementSize == null)
-            {
-                GD.PushError(
-                    $"Chunk {Uid}: 无法初始化 ChunkData，ChunkElementSize 未准备完成。OwnerManager={(ownerManager == null ? "null" : ownerManager.ToString())}, OwnerLayer={(ownerLayer == null ? "null" : ownerLayer.ToString())}"
-                );
-                return false;
-            }
-
-            if (referenceTiles.Length != chunkElementSize.Area)
-            {
-                GD.PushError(
-                    $"Chunk {Uid}: 尝试初始化的 tile 数组长度不匹配。应为 {chunkElementSize.Area}，实际为 {referenceTiles.Length}"
-                );
-                return false;
-            }
-
-            Data?.Dispose();
-            Data = new ChunkData(
-                chunkElementSize,
-                referenceTiles,
-                OnChunkDataTileChanged,
-                OnChunkDataTilesBatchChanged
-            );
+            Data = setData;
             return true;
         }
 
@@ -207,29 +187,18 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         ********************************/
 
         /// <summary>
-        /// 适配 ChunkData 的单点 Tile 变化通知，并转发到 ChunkManager 事件总线。
+        /// 向上传递 Chunk 状态稳定变化消息到事件总线
         /// </summary>
-        private void OnChunkDataTileChanged(Vector2I localPosition, int newTileId, TileChangeType changeType)
+        internal void NotifyStateStableReached(ChunkStateNode previousNode, ChunkStateNode newNode)
         {
-            TileChangedEventArgs args = new(CPosition, localPosition, newTileId, changeType);
-            OwnerManager?.OnTileChanged(args);
-        }
-
-        /// <summary>
-        /// 适配 ChunkData 的批量 Tile 变化通知，并转发到 ChunkManager 事件总线。
-        /// </summary>
-        private void OnChunkDataTilesBatchChanged(Vector2I[] localPositions, int[] newTileIds, TileChangeType changeType)
-        {
-            TilesBatchChangedEventArgs args = new(CPosition, localPositions, newTileIds, changeType);
-            OwnerManager?.OnTilesBatchChanged(args);
+            NotifyStateStableReached(new ChunkStateStableReachedEventArgs(CPosition, previousNode, newNode));
         }
 
         /// <summary>
         /// 向上传递 Chunk 状态稳定变化消息到事件总线
         /// </summary>
-        internal void NotifyStateStableReached(ChunkStateNode previousNode, ChunkStateNode newNode)
+        internal void NotifyStateStableReached(ChunkStateStableReachedEventArgs args)
         {
-            ChunkStateStableReachedEventArgs args = new(CPosition, previousNode, newNode);
             OwnerManager?.OnChunkStateStableReached(args);
         }
 
