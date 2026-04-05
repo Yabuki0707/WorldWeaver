@@ -27,9 +27,9 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         private Vector2I[] _pointsCache;
 
         /// <summary>
-        /// 已归并完成的边界差值盒缓存。
+        /// 已归并完成的坐标边界范围缓存。
         /// </summary>
-        private Rect2I _boundingBoxCache;
+        private Rect2I _coordinateBoundsCache;
 
         /// <summary>
         /// 当前是否存在尚未归并到稳定缓存的新增点。
@@ -44,7 +44,7 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
             _pendingPoints = new List<Vector2I>();
             _normalizedPointKeys = new HashSet<long>();
             _pointsCache = Array.Empty<Vector2I>();
-            _boundingBoxCache = new Rect2I(Vector2I.Zero, Vector2I.Zero);
+            _coordinateBoundsCache = new Rect2I(Vector2I.Zero, Vector2I.Zero);
             _isDirty = false;
         }
 
@@ -155,15 +155,15 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         }
 
         /// <summary>
-        /// 当前点集合的边界差值盒。
+        /// 当前点集合的坐标边界范围。
         /// <para>访问时会先确保待归并数据已刷新到稳定缓存中。</para>
         /// </summary>
-        public override Rect2I BoundingBox
+        public override Rect2I CoordinateBounds
         {
             get
             {
                 EnsureNormalized();
-                return _boundingBoxCache;
+                return _coordinateBoundsCache;
             }
         }
 
@@ -254,10 +254,10 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
 
             if (hasAnyNormalizedPoint)
             {
-                minX = _boundingBoxCache.Position.X;
-                maxX = _boundingBoxCache.Position.X + _boundingBoxCache.Size.X;
-                minY = _boundingBoxCache.Position.Y;
-                maxY = _boundingBoxCache.Position.Y + _boundingBoxCache.Size.Y;
+                minX = _coordinateBoundsCache.Position.X;
+                maxX = _coordinateBoundsCache.Position.X + _coordinateBoundsCache.Size.X;
+                minY = _coordinateBoundsCache.Position.Y;
+                maxY = _coordinateBoundsCache.Position.Y + _coordinateBoundsCache.Size.Y;
                 Vector2I[] mergedCache = new Vector2I[_pointsCache.Length + _pendingPoints.Count];
                 Array.Copy(_pointsCache, mergedCache, _pointsCache.Length);
 
@@ -292,7 +292,7 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
                 }
             }
 
-            _boundingBoxCache = new Rect2I(new Vector2I(minX, minY), new Vector2I(maxX - minX, maxY - minY));
+            _coordinateBoundsCache = new Rect2I(new Vector2I(minX, minY), new Vector2I(maxX - minX, maxY - minY));
             _pendingPoints.Clear();
             _isDirty = false;
         }

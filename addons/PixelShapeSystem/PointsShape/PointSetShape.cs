@@ -17,9 +17,9 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         private readonly Vector2I[] _pointsCache;
 
         /// <summary>
-        /// 构造完成后的边界差值盒缓存。
+        /// 构造完成后的坐标边界范围缓存。
         /// </summary>
-        private readonly Rect2I _boundingBoxCache;
+        private readonly Rect2I _coordinateBoundsCache;
 
         /// <summary>
         /// 创建一个空的静态点集合形状。
@@ -27,7 +27,7 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         public PointSetShape()
         {
             _pointsCache = Array.Empty<Vector2I>();
-            _boundingBoxCache = new Rect2I(Vector2I.Zero, Vector2I.Zero);
+            _coordinateBoundsCache = new Rect2I(Vector2I.Zero, Vector2I.Zero);
         }
 
         /// <summary>
@@ -42,7 +42,7 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
                 throw new ArgumentNullException(nameof(points));
             }
 
-            (_pointsCache, _boundingBoxCache) = BuildUniquePoints(points);
+            (_pointsCache, _coordinateBoundsCache) = BuildUniquePoints(points);
         }
 
         /// <summary>
@@ -54,9 +54,9 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         }
 
         /// <summary>
-        /// 该点集合的边界差值盒。
+        /// 该点集合的坐标边界范围。
         /// </summary>
-        public override Rect2I BoundingBox => _boundingBoxCache;
+        public override Rect2I CoordinateBounds => _coordinateBoundsCache;
 
         /// <summary>
         /// 去重后的有效点数量。
@@ -107,11 +107,11 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         }
 
         /// <summary>
-        /// 将输入点序列去重并整理为唯一点数组与包围盒。
+        /// 将输入点序列去重并整理为唯一点数组与坐标边界范围。
         /// </summary>
         /// <param name="points">输入点序列。</param>
-        /// <returns>去重后的点数组以及对应的边界差值盒。</returns>
-        private static (Vector2I[] Points, Rect2I BoundingBox) BuildUniquePoints(IEnumerable<Vector2I> points)
+        /// <returns>去重后的点数组以及对应的坐标边界范围。</returns>
+        private static (Vector2I[] Points, Rect2I CoordinateBounds) BuildUniquePoints(IEnumerable<Vector2I> points)
         {
             HashSet<long> uniquePointKeys = new();
             List<Vector2I> normalizedPoints = new();

@@ -17,9 +17,9 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         private readonly Vector2I[] _points;
 
         /// <summary>
-        /// 构造完成后的边界差值盒缓存。
+        /// 构造完成后的坐标边界范围缓存。
         /// </summary>
-        private readonly Rect2I _boundingBox;
+        private readonly Rect2I _coordinateBounds;
 
         /// <summary>
         /// 创建一个空的静态点列表形状。
@@ -27,7 +27,7 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         public PointListShape()
         {
             _points = Array.Empty<Vector2I>();
-            _boundingBox = new Rect2I(Vector2I.Zero, Vector2I.Zero);
+            _coordinateBounds = new Rect2I(Vector2I.Zero, Vector2I.Zero);
         }
 
         /// <summary>
@@ -42,7 +42,7 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
                 throw new ArgumentNullException(nameof(points));
             }
 
-            (_points, _boundingBox) = BuildPoints(points);
+            (_points, _coordinateBounds) = BuildPoints(points);
         }
 
         /// <summary>
@@ -54,9 +54,9 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         }
 
         /// <summary>
-        /// 当前点列表的边界差值盒。
+        /// 当前点列表的坐标边界范围。
         /// </summary>
-        public override Rect2I BoundingBox => _boundingBox;
+        public override Rect2I CoordinateBounds => _coordinateBounds;
 
         /// <summary>
         /// 当前点列表中的点数量。
@@ -108,11 +108,11 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         }
 
         /// <summary>
-        /// 将输入点序列整理为点数组，并同步计算边界差值盒。
+        /// 将输入点序列整理为点数组，并同步计算坐标边界范围。
         /// </summary>
         /// <param name="points">输入点序列。</param>
-        /// <returns>点数组以及对应的边界差值盒。</returns>
-        private static (Vector2I[] Points, Rect2I BoundingBox) BuildPoints(IEnumerable<Vector2I> points)
+        /// <returns>点数组以及对应的坐标边界范围。</returns>
+        private static (Vector2I[] Points, Rect2I CoordinateBounds) BuildPoints(IEnumerable<Vector2I> points)
         {
             List<Vector2I> pointList = new();
             bool hasAnyPoint = false;

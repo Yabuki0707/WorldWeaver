@@ -6,7 +6,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
     /// <summary>
     /// 区块状态节点信息
     /// </summary>
-    public struct ChunkStateNodeInfo
+    public class ChunkStateNodeInfo
     {
         /// <summary>所属的节点枚举</summary>
         public ChunkStateNode Node { get; set; }

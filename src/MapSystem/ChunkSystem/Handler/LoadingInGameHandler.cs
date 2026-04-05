@@ -9,6 +9,10 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State.Handler
     /// </summary>
     public sealed class LoadingInGameHandler : StateHandler
     {
-        public override StateExecutionResult Execute(Chunk chunk) => StateExecutionResult.Success;
+        public override StateExecutionResult Execute(ChunkManager manager, Chunk chunk)
+        {
+            // 占位实现：当前版本暂未接入真实的游戏对象加载流程，先返回成功。
+            return StateExecutionResult.Success;
+        }
     }
 }

@@ -27,7 +27,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         public ChunkData GetChunkData(ChunkPosition chunkPosition)
         {
             Chunk chunk = _owner.GetChunk(chunkPosition);
-            if (chunk == null || chunk == Chunk.Empty)
+            if (chunk == null || chunk == Chunk.EMPTY)
             {
                 return null;
             }

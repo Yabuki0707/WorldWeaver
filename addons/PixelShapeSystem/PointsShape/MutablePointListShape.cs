@@ -107,10 +107,10 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         }
 
         /// <summary>
-        /// 当前点列表的边界差值盒。
+        /// 当前点列表的坐标边界范围。
         /// <para>每次访问都会基于当前列表实时计算，不额外缓存。</para>
         /// </summary>
-        public override Rect2I BoundingBox
+        public override Rect2I CoordinateBounds
         {
             get
             {

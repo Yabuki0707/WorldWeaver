@@ -29,7 +29,7 @@ namespace WorldWeaver.PixelShapeSystem
         /// <param name="position">点的全局坐标。</param>
         public SinglePoint(Vector2I position)
         {
-            BoundingBox = new Rect2I(position, Vector2I.Zero);
+            CoordinateBounds = new Rect2I(position, Vector2I.Zero);
         }
 
 
@@ -38,10 +38,10 @@ namespace WorldWeaver.PixelShapeSystem
         // ================================================================================
 
         /// <summary>
-        /// 单点形状的边界差值盒。
+        /// 单点形状的坐标边界范围。
         /// <para>单点的最小边界与最大边界重合，因此差值始终为零。</para>
         /// </summary>
-        public override Rect2I BoundingBox { get; }
+        public override Rect2I CoordinateBounds { get; }
 
         /// <summary>
         /// 单点形状覆盖的离散点数量。
@@ -58,7 +58,7 @@ namespace WorldWeaver.PixelShapeSystem
         /// </summary>
         public override IEnumerable<Vector2I> GetGlobalCoordinateIterator()
         {
-            yield return BoundingBox.Position;
+            yield return CoordinateBounds.Position;
         }
 
 
@@ -71,7 +71,7 @@ namespace WorldWeaver.PixelShapeSystem
         /// </summary>
         public override List<Vector2I> GetGlobalCoordinateList()
         {
-            return new List<Vector2I> { BoundingBox.Position };
+            return new List<Vector2I> { CoordinateBounds.Position };
         }
 
 
@@ -84,7 +84,7 @@ namespace WorldWeaver.PixelShapeSystem
         /// </summary>
         public override Vector2I[] GetGlobalCoordinateArray()
         {
-            return new[] { BoundingBox.Position };
+            return new[] { CoordinateBounds.Position };
         }
     }
 }

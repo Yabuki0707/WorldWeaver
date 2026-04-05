@@ -9,6 +9,10 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State.Handler
     /// </summary>
     public sealed class DeletingFromMemoryHandler : StateHandler
     {
-        public override StateExecutionResult Execute(Chunk chunk) => StateExecutionResult.Success;
+        public override StateExecutionResult Execute(ChunkManager manager, Chunk chunk)
+        {
+            // 占位实现：当前版本暂未接入真实的内存卸载流程，先返回成功。
+            return StateExecutionResult.Success;
+        }
     }
 }

@@ -571,7 +571,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         /// 获取指定状态节点的状态处理器
         /// </summary>
         /// <param name="node">要查询的状态节点</param>
-        /// <returns>该节点的状态处理器</returns>
+        /// <returns>该节点配置的状态处理器；若未配置则返回 null。</returns>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static StateHandler GetHandler(ChunkStateNode node)
         {
@@ -625,7 +625,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         public static void DisableNodeGlobal(ChunkStateNode node)
         {
             int index = (int)node;
-            ref ChunkStateNodeInfo info = ref _stateNodesInfo[index];
+            ChunkStateNodeInfo info = _stateNodesInfo[index];
             if (info.Priority == 0)
             {
                 info.Priority = int.MinValue;

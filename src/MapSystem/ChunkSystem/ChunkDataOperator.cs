@@ -164,12 +164,12 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         // ================================================================================
 
         /// <summary>
-        /// 根据 shape 面积选择切片策略。
-        /// <para>当 <c>shape.BoundingBox.GetArea() &gt; ChunkSize.Area * 1024</c> 时使用 <see cref="ShapeChunkSet"/>。</para>
+        /// 根据 shape 的坐标边界范围面积选择切片策略。
+        /// <para>当 <c>shape.CoordinateBounds.GetArea() &gt; ChunkSize.Area * 1024</c> 时使用 <see cref="ShapeChunkSet"/>。</para>
         /// </summary>
         private IShapeChunkSlice CreateChunkSlice(PixelShape shape)
         {
-            long shapeArea = shape.BoundingBox.Area;
+            long shapeArea = shape.CoordinateBounds.Area;
             long largeShapeThreshold = (long)_owner.OwnerLayer.ChunkSize.Area * LARGE_SHAPE_THRESHOLD_MULTIPLIER;
             return shapeArea > largeShapeThreshold
                 ? new ShapeChunkSet(_owner)

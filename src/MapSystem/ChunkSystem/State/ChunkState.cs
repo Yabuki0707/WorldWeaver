@@ -1,321 +1,393 @@
 using System;
-using Godot;
 using System.Runtime.CompilerServices;
+using Godot;
 using WorldWeaver.MapSystem.ChunkSystem.State.Handler;
 
 namespace WorldWeaver.MapSystem.ChunkSystem.State
 {
     /// <summary>
-    /// 区块状态机引擎。
-    /// <para>每个 Chunk 实例拥有一个 ChunkState 实例。</para>
-    /// <para>负责驱动状态转换、计算路径、请求回调。</para>
+    /// 区块状态对象。
+    /// <para>该类只负责维护状态节点、阻塞信息与目标选择规则，不再直接执行 handler。</para>
+    /// <para>状态推进的副作用由 ChunkManager 驱动 handler 完成；执行成功后，再由 Chunk 调用本类完成节点迁移。</para>
     /// </summary>
     public sealed class ChunkState : IDisposable
     {
-
-
         /*******************************
-                  实例成员与构造
+                  基础状态字段
         ********************************/
 
         /// <summary>
-        /// 所属区块,作为执行回调操作、传递tile设置、移除等讯息的主体
+        /// 前一个状态节点（用于永久失败时回退）。
         /// </summary>
-        public Chunk OwnerChunk { get; private set; }
-
+        public ChunkStateNode? PreviousNode { get; private set; }
 
         /// <summary>
-        /// 构造函数
+        /// 当前状态节点。
         /// </summary>
-        /// <param name="ownerChunk">所属区块</param>
-        /// <exception cref="ArgumentNullException">ownerChunk 为 null</exception>
-        /// <exception cref="ArgumentException">ownerChunk 为 Chunk.Empty</exception>
-        public ChunkState(Chunk ownerChunk)
-        {
-            if (ownerChunk == null)
-            {
-                GD.PushError("ownerChunk 不能为 null");
-                throw new ArgumentNullException(nameof(ownerChunk), "ownerChunk 不能为 null");
-            }
-            else if (ownerChunk == Chunk.Empty)
-            {
-                GD.PushError("ownerChunk 不能为 Chunk.Empty");
-                throw new ArgumentException("ownerChunk 不能为 Chunk.Empty", nameof(ownerChunk));
-            }
-            OwnerChunk = ownerChunk;
-        }
+        public ChunkStateNode CurrentNode { get; private set; } = ChunkStateNode.Enter;
 
-        /// <summary>前一个状态节点（用于回退）</summary>
-        public ChunkStateNode? PreviousNode { get; private set; } = null;
+        /// <summary>
+        /// 当前所在稳定节点（上一次到达的稳定节点）。
+        /// </summary>
+        public ChunkStateNode CurrentStableNode { get; private set; } = ChunkStateNode.Enter;
 
-        /// <summary>当前状态节点</summary>
-        public ChunkStateNode CurrentNode{get;private set;} = ChunkStateNode.Enter;
+        /// <summary>
+        /// 中间目标稳定节点。
+        /// <para>表示当前稳定节点在通往最终目标稳定节点过程中，下一步应先到达哪个稳定节点。</para>
+        /// </summary>
+        public ChunkStateNode TargetStableNode { get; private set; } = ChunkStateNode.NotInMemory;
 
-        /// <summary>当前所在稳定节点（上一次到达的稳定节点）</summary>
-        public ChunkStateNode CurrentStableNode{get;private set;} = ChunkStateNode.Enter;
+        /// <summary>
+        /// 最终目标稳定节点。
+        /// </summary>
+        public ChunkStateNode FinalStableNode { get; private set; } = ChunkStateNode.NotInMemory;
 
-        /// <summary>目标稳定节点（中间过程，下一步要去哪个稳定节点）</summary>
-        public ChunkStateNode TargetStableNode{get;private set;} = ChunkStateNode.NotInMemory;
+        /// <summary>
+        /// 目标节点（下一步要切换到哪个节点）。
+        /// <para>该字段是缓存字段：仅当其为 null 时才会重新计算；成功推进状态后才会被清空。</para>
+        /// </summary>
+        public ChunkStateNode? TargetNode { get; private set; }
 
-        /// <summary>终点稳定节点（最终目的地）</summary>
-        public ChunkStateNode FinalStableNode{get;private set;} = ChunkStateNode.NotInMemory;
-
-        /// <summary>目标节点（中间过程，下一步要去哪个节点）</summary>
-        public ChunkStateNode? TargetNode{get;private set;} = null;
 
         /*******************************
-                  阻塞
+                  阻塞表
         ********************************/
 
-        /// <summary>阻塞节点数组（无法进入的节点），索引为ChunkStateNode枚举值</summary>
+        /// <summary>
+        /// 阻塞节点数组（无法进入的节点），索引为 ChunkStateNode 枚举值。
+        /// </summary>
         private readonly bool[] _blockedNodes = new bool[Enum.GetValues(typeof(ChunkStateNode)).Length];
 
-        /// <summary>阻塞指定节点</summary>
+        /// <summary>
+        /// 阻塞指定节点。
+        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void BlockNode(ChunkStateNode node) => _blockedNodes[(int)node] = true;
+        public void BlockNode(ChunkStateNode node)
+        {
+            // 将目标节点标记为“临时不可进入”，用于下次选路时跳过。
+            _blockedNodes[(int)node] = true;
+        }
 
-        /// <summary>检查指定节点是否被阻塞</summary>
+        /// <summary>
+        /// 检查指定节点是否被阻塞。
+        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool IsBlocked(ChunkStateNode node) => _blockedNodes[(int)node];
+        public bool IsBlocked(ChunkStateNode node)
+        {
+            // 直接读取阻塞表标记，供选路逻辑快速判断。
+            return _blockedNodes[(int)node];
+        }
 
-        /// <summary>清空阻塞表</summary>
+        /// <summary>
+        /// 清空阻塞表。
+        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void ClearBlockedNodes() => Array.Clear(_blockedNodes, 0, _blockedNodes.Length);
-
+        public void ClearBlockedNodes()
+        {
+            // 每次成功推进或需要“重新放开路径”时，统一清空阻塞节点集合。
+            Array.Clear(_blockedNodes, 0, _blockedNodes.Length);
+        }
 
 
         /*******************************
-                  核心驱动逻辑
+                  目标设置与路径规划
         ********************************/
 
         /// <summary>
-        /// 设置终点稳定节点，并重新计算路径
+        /// 设置最终目标稳定节点，并重新规划中间稳定目标。
         /// </summary>
         public bool SetFinalTarget(ChunkStateNode finalNode)
         {
-            if (ChunkStateMachine.IsStable(finalNode) == false)
+            // 终点必须是稳定节点，否则无法参与稳定路径规划。
+            if (!ChunkStateMachine.IsStable(finalNode))
             {
-                GD.PushError($"ChunkState: 试图设置非稳定节点 {finalNode} 为最终目标！");
+                GD.PushError($"ChunkState: 试图设置非稳定节点 {finalNode} 为最终目标。");
                 return false;
             }
 
+            // 更新最终目标后，主动失效当前目标节点缓存，强制下次重新选路。
             FinalStableNode = finalNode;
+            TargetNode = null;
+
+            // 重新计算从当前稳定节点到最终稳定节点的下一段稳定目标。
             return RecalculateTargetStable();
         }
 
         /// <summary>
-        /// 重新计算中间目标稳定节点
+        /// 重新计算中间目标稳定节点。
+        /// <para>该方法只做“宏观导航”：决定当前稳定节点通往最终稳定节点时，下一个应抵达的稳定节点。</para>
         /// </summary>
         private bool RecalculateTargetStable()
         {
-            // 如果当前稳定节点就是终点，那么目标的稳定节点即当前稳定节点也就是终点稳定节点，此刻的当前、目标、终点是同一个节点
+            // 已经在最终稳定节点时，当前稳定节点就是下一段目标。
             if (CurrentStableNode == FinalStableNode)
             {
                 TargetStableNode = CurrentStableNode;
                 return true;
             }
-            // 查表：获取从当前稳定节点去往终点的路径集合 (包含距离信息)
 
-            // 存在通往目标稳定节点的稳定节点路径并获取
+            // 从稳定路径查表中读取“各候选稳定节点到终点的距离”。
             int[] pathDistances = ChunkStateMachine.GetStablePathLookup(CurrentStableNode, FinalStableNode);
             if (pathDistances != null)
             {
-                // 找到一个邻近的稳定节点 (Candidate)，使得它在 通往终点的路径上(pathDistances)中，并且距离终点最近
-                
-                // 通往且距离终点稳定节点最近的稳定节点
+                // 默认保持原地，只有找到更优候选才替换。
                 ChunkStateNode bestCandidate = CurrentStableNode;
-                // 是否找到一个候选节点
                 bool isFound = false;
-                // 候选节点的距离(要求是距离终点节点最近的距离)
                 int minDistance = int.MaxValue;
 
-                //遍历所有可能的稳定节点邻居
                 foreach (ChunkStateNode candidate in ChunkStateMachine.GetStableAdjacency(CurrentStableNode))
                 {
-                    // 若不再通往目标稳定节点的路径上，则跳过
-                    int candidateDist = pathDistances[(int)candidate];
-                    // 候选节点到终点的距离
-                    if (candidateDist == int.MinValue)
-                        continue;
-                    // 该候选节点距离终点更近，作为最优解更新
-                    if (candidateDist < minDistance)
+                    // int.MinValue 代表该候选不在可达路径上，直接跳过。
+                    int candidateDistance = pathDistances[(int)candidate];
+                    if (candidateDistance == int.MinValue)
                     {
-                        minDistance = candidateDist;
+                        continue;
+                    }
+
+                    // 选择到终点距离更短的稳定邻居作为下一段目标。
+                    if (candidateDistance < minDistance)
+                    {
+                        minDistance = candidateDistance;
                         bestCandidate = candidate;
                         isFound = true;
                     }
                 }
-                // 找到了一个距离终点稳定节点最近的稳定节点
+
                 if (isFound)
                 {
+                    // 找到可达且更优的稳定候选，更新中间稳定目标。
                     TargetStableNode = bestCandidate;
                     return true;
                 }
             }
-            // 无路可走或无候选的目标稳定节点，则保持原地
 
-            // 将目标稳定节点设为当前稳定节点(即保持原地)
+            // 无路径或无候选时，回退为“保持当前稳定节点”。
             if (TargetStableNode != CurrentStableNode)
+            {
                 TargetStableNode = CurrentStableNode;
+            }
+
+            // 返回 false 让上层知道：本轮稳定目标未真正推进。
             return false;
         }
 
 
+        /*******************************
+                  目标节点选择
+        ********************************/
 
         /// <summary>
-        /// 更新状态机（由 ChunkManager 驱动）
-        /// 若当前节点的回调操作返回null,则将当前节点加入阻塞表,并进行回退
+        /// 选择下一步的目标节点。
+        /// <para>该方法只负责“从当前状态推导下一跳”，不执行任何 handler。</para>
+        /// <para>若最终没有可走的下一跳，则返回 false，并保持 <see cref="TargetNode"/> 为 null。</para>
         /// </summary>
-        /// <returns>是否成功变更状态或达到终点稳定状态</returns>
-        public bool Update()
+        public bool SelectTargetNode()
         {
-            // 到达目标稳定节点则尝试更新新的目标
-            // 此刻有两种情况，"刚到达目标稳定节点" 和 "停滞于目标稳定节点"
-            if (CurrentNode == TargetStableNode)
+            // 目标节点已缓存则复用，避免重复计算。
+            if (TargetNode != null)
             {
-                // 若当前稳定节点未更新为已到达的目标稳定节点，则判定为 "刚到达目标稳定节点"
-                if (CurrentStableNode != TargetStableNode)
-                {
-                    // 向上传递状态稳定变化消息到事件总线
-                    OwnerChunk?.NotifyStateStableReached(CurrentStableNode, TargetStableNode);
-                    // 到达了中间的目标稳定节点，则更新当前稳定节点
-                    CurrentStableNode = CurrentNode;
-                }
-                // 重新计算下一个中间目标,若下一个中间目标不存在,则返回失败
-                if (RecalculateTargetStable()==false) return false;
-                // 当成功获取新的目标稳定节点 或 已到达终点稳定节点时 ,认定为成功
                 return true;
             }
-            // 获取当前稳定节点通往目标稳定节点的路径，若不存在则返回失败
-            // 目标稳定节点是当前稳定节点的邻近稳定节点，因此可通过 _detailedPathLookup 获取两者间的路径
+
+            // 当前节点已经位于中间目标稳定节点时，需要先重新规划下一段稳定路径。
+            if (CurrentNode == TargetStableNode)
+            {
+                if (CurrentStableNode != CurrentNode)
+                {
+                    // 当前节点已到稳定节点时，刷新“当前稳定节点”游标。
+                    CurrentStableNode = CurrentNode;
+                }
+
+                if (CurrentStableNode == FinalStableNode)
+                {
+                    // 到达终点稳定节点后，本轮无需再选下一跳。
+                    TargetStableNode = CurrentStableNode;
+                    return false;
+                }
+
+                // 尚未到终点稳定节点，先更新下一段稳定目标。
+                if (!RecalculateTargetStable())
+                {
+                    return false;
+                }
+            }
+
+            // 读取“当前稳定节点 -> 目标稳定节点”这一段的详细路径节点集合。
             bool[] pathLookup = ChunkStateMachine.GetDetailedPathLookup(CurrentStableNode, TargetStableNode);
             if (pathLookup == null)
             {
                 return false;
             }
-            // 若目标节点为空,则需要选择一个目标节点(下一跳的节点)
-            if (TargetNode==null)
-            { 
-                // 获取当前节点导向的邻居节点们
-                ChunkStateNode[] transitions = ChunkStateMachine.GetValidTransitions(CurrentNode);
-                // 遍历当前节点的所有 ValidTransitions，看哪个在 pathLookup 中，并选择优先级最高的
-                
-                // 最优的下一跳节点的优先级,初始化为-1，负数优先级代表全局禁止进入
-                int maxPriority = -1;
-                // 最优的下一跳节点
-                ChunkStateNode? bestTransitionNode = null;
-                // 遍历并选择未被阻塞且优先级最高的合法邻近节点
 
-                foreach (ChunkStateNode transitionNode in transitions)
-                {
-                    // 不在当前节点到目标节点的路径上则跳过
-                    if (pathLookup[(int)transitionNode]==false) continue;
-                    // 若目标节点阻塞则跳过
-                    if (IsBlocked(transitionNode)) continue;
-                    // 获取节点的优先级
-                    int priority = ChunkStateMachine.GetPriority(transitionNode);
-                    // 优先级为负数则不考虑
-                    if (ChunkStateMachine.IsNodeGlobalDisabled(transitionNode)==true) continue;
+            // 在当前节点可导向的邻接节点里，选出优先级最高且可达的下一跳。
+            ChunkStateNode[] transitions = ChunkStateMachine.GetValidTransitions(CurrentNode);
+            int maxPriority = -1;
+            ChunkStateNode? bestTransitionNode = null;
 
-                    // 更新最高优先级
-                    if (priority > maxPriority)
-                    {
-                        maxPriority = priority;
-                        bestTransitionNode = transitionNode;
-                    }
-                }
-                // 若没有最优的下一跳节点,则收集错误信息并返回错误,并尝试释放阻塞表里的节点(为了防止原地打转,只能被迫再次尝试被阻塞的节点)
-                if (bestTransitionNode==null)
-                {
-                    // 检查阻塞表是否存在被阻塞的节点
-                    bool isAnyBlocked = false;
-                    // 被阻塞节点名称字符串构建器
-                    System.Text.StringBuilder blockedNodeNames = new();
-                    // 遍历阻塞表，收集被阻塞的节点名称
-                    for (int blockedNodeIndex = 0; blockedNodeIndex < _blockedNodes.Length; blockedNodeIndex++)
-                    {
-                        if (_blockedNodes[blockedNodeIndex])
-                        {
-                            isAnyBlocked = true;
-                            // 若已有节点名称，则添加分隔符
-                            if (blockedNodeNames.Length > 0)
-                                blockedNodeNames.Append(',');
-                            // 将枚举索引转换为节点名称
-                            blockedNodeNames.Append(((ChunkStateNode)blockedNodeIndex).ToString());
-                        }
-                    }
-                    // 若阻塞表不为空，则清空阻塞表腾出更多选择
-                    if (isAnyBlocked)
-                    {
-                        GD.PushError($"ChunkState: 没有找到最优的下一跳节点,但阻塞表不为空,已清空阻塞表腾出更多选择,当前节点: {CurrentNode},阻塞表: {blockedNodeNames}");
-                        ClearBlockedNodes();
-                    }
-                    return false;
-                }
-                // 若找到一个最优的下一跳节点则更新
-                else
-                    TargetNode = bestTransitionNode;
-            }
-            // 若前一个节点为null，则无需执行回调，直接变更为目标节点
-            if (PreviousNode == null)
+            foreach (ChunkStateNode transitionNode in transitions)
             {
-                // 更新前节点为当前节点
-                PreviousNode = CurrentNode;
-                // 变更当前节点为目标节点
-                CurrentNode = (ChunkStateNode)TargetNode;
-                TargetNode = null;
-                ClearBlockedNodes();
-                return true;
-            }
-            // 目标节点的状态处理器
-            StateHandler handler = ChunkStateMachine.GetHandler((ChunkStateNode)TargetNode);
-            // 执行目标节点的回调操作结果：Success=成功，RetryLater=临时失败，PermanentFailure=永久失败。
-            StateExecutionResult executeResult = handler?.Execute(OwnerChunk) ?? StateExecutionResult.Success;
+                // 不在本段路径上的节点不参与竞争。
+                if (!pathLookup[(int)transitionNode])
+                {
+                    continue;
+                }
 
-            switch (executeResult)
+                // 被局部阻塞表拦截的节点不参与竞争。
+                if (IsBlocked(transitionNode))
+                {
+                    continue;
+                }
+
+                // 被全局禁用的节点不参与竞争。
+                if (ChunkStateMachine.IsNodeGlobalDisabled(transitionNode))
+                {
+                    continue;
+                }
+
+                // 选择优先级最高的可用节点。
+                int priority = ChunkStateMachine.GetPriority(transitionNode);
+                if (priority > maxPriority)
+                {
+                    maxPriority = priority;
+                    bestTransitionNode = transitionNode;
+                }
+            }
+
+            if (bestTransitionNode == null)
+            {
+                // 没有可选下一跳时，尝试清空阻塞表让后续循环有机会重试。
+                TryResetBlockedNodesForRetry();
+                return false;
+            }
+
+            // 记录下一跳目标，供 Manager 在本轮执行处理器后推进状态。
+            TargetNode = bestTransitionNode;
+            return true;
+        }
+
+        /// <summary>
+        /// 当所有可行下一跳都因阻塞表而失效时，清空阻塞表以便后续重试。
+        /// </summary>
+        private void TryResetBlockedNodesForRetry()
+        {
+            // 收集当前阻塞表内容，便于日志定位“为什么无路可走”。
+            bool isAnyBlocked = false;
+            System.Text.StringBuilder blockedNodeNames = new();
+
+            for (int blockedNodeIndex = 0; blockedNodeIndex < _blockedNodes.Length; blockedNodeIndex++)
+            {
+                if (!_blockedNodes[blockedNodeIndex])
+                {
+                    continue;
+                }
+
+                isAnyBlocked = true;
+                if (blockedNodeNames.Length > 0)
+                {
+                    blockedNodeNames.Append(',');
+                }
+
+                blockedNodeNames.Append(((ChunkStateNode)blockedNodeIndex).ToString());
+            }
+
+            if (isAnyBlocked)
+            {
+                GD.PushError(
+                    $"ChunkState: 没有找到可用的下一跳节点，但阻塞表不为空，已清空阻塞表以便后续重试。当前节点: {CurrentNode}, 阻塞表: {blockedNodeNames}");
+
+                // 清空阻塞后，下个周期将重新评估这些节点。
+                ClearBlockedNodes();
+            }
+        }
+
+
+        /*******************************
+                  状态提交与失败处理
+        ********************************/
+
+        /// <summary>
+        /// 将当前状态推进到已选定的目标节点。
+        /// <para>该方法应只在 handler 执行成功后调用。</para>
+        /// </summary>
+        public ChunkStateUpdateResult UpdateToTargetNode()
+        {
+            // 没有目标节点时，不执行任何状态推进。
+            if (TargetNode == null)
+            {
+                return null;
+            }
+
+            // 快照推进前的信息，用于生成回传结果。
+            ChunkStateNode previousNode = CurrentNode;
+            ChunkStateNode newNode = TargetNode.Value;
+            ChunkStateNode? previousStableNode = null;
+            ChunkStateNode? newStableNode = null;
+            bool isNewNodeStable = ChunkStateMachine.IsStable(newNode);
+
+            // 提交节点推进：当前节点切换到目标节点，并清空目标缓存与阻塞表。
+            PreviousNode = previousNode;
+            CurrentNode = newNode;
+            TargetNode = null;
+            ClearBlockedNodes();
+
+            // 若推进后落在稳定节点，同步刷新稳定节点游标。
+            if (isNewNodeStable)
+            {
+                previousStableNode = CurrentStableNode;
+                CurrentStableNode = newNode;
+                newStableNode = newNode;
+            }
+
+            // 返回本次推进摘要，供 ChunkManager 统一广播事件。
+            return new ChunkStateUpdateResult(
+                previousNode,
+                newNode,
+                isNewNodeStable,
+                previousStableNode,
+                newStableNode);
+        }
+
+        /// <summary>
+        /// 处理 handler 执行失败后的状态收敛。
+        /// </summary>
+        public void HandleExecutionFailure(StateExecutionResult executionResult)
+        {
+            switch (executionResult)
             {
                 case StateExecutionResult.PermanentFailure:
-                    // 回退至前一个节点，执行新的处理操作（如果前节点存在且不是当前节点）
+                    // 永久失败：回退到上一节点，并阻塞当前节点避免立刻重复踩雷。
                     if (PreviousNode != null && PreviousNode != CurrentNode)
                     {
-                        // 清空阻塞表，因为前一个节点处理操作阻塞的节点不一定在其他操作路线里被阻塞
                         ClearBlockedNodes();
-                        // 将前一个当前节点加入阻塞表（禁止推进到该节点，防止其再发生错误）
                         BlockNode(CurrentNode);
                         CurrentNode = PreviousNode.Value;
                     }
-                    TargetNode = null;
-                    return false;
 
-                case StateExecutionResult.Success:
-                    // 更新前节点为本次更新前的节点
-                    PreviousNode = CurrentNode;
-                    // 变更当前节点为目标节点
-                    CurrentNode = (ChunkStateNode)TargetNode;
+                    // 清空目标节点，让下个周期重新选路。
                     TargetNode = null;
-                    ClearBlockedNodes();
-                    return true;
+                    break;
 
                 case StateExecutionResult.RetryLater:
+                    // 临时失败：保持当前状态，等待后续重试。
+                case StateExecutionResult.Success:
                 default:
-                    // 临时失败，保持现状
-                    return false;
+                    // Success 不应走到这里；default 兜底保持不变。
+                    break;
             }
         }
-        
-        
+
+
         /*******************************
                   IDisposable 实现
         ********************************/
 
         /// <summary>
-        /// 释放 ChunkState 资源
+        /// 释放 ChunkState 资源。
         /// </summary>
         public void Dispose()
         {
-            // 清理托管资源
+            // 仅清空本地阻塞表；不持有外部资源与上级引用，无需额外释放。
             ClearBlockedNodes();
-            OwnerChunk = null;
         }
     }
 }

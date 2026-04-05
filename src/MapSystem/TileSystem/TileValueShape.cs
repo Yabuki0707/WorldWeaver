@@ -35,6 +35,47 @@ namespace WorldWeaver.MapSystem.TileSystem
         public bool HasTileRunIds => HasValues;
 
         /// <summary>
+        /// 使用全局坐标列表与对应值列表构造一个带值的 TileValueShape。
+        /// </summary>
+        public static TileValueShape CreateValued(List<Vector2I> globalPositions, List<int> tileRunIds)
+        {
+            if (globalPositions == null)
+            {
+                throw new ArgumentNullException(nameof(globalPositions));
+            }
+
+            if (tileRunIds == null)
+            {
+                throw new ArgumentNullException(nameof(tileRunIds));
+            }
+
+            if (globalPositions.Count == 0)
+            {
+                return EMPTY_VALUED;
+            }
+
+            return new TileValueShape(new PointListShape(globalPositions), tileRunIds.ToArray());
+        }
+
+        /// <summary>
+        /// 使用全局坐标列表构造一个仅坐标的 TileValueShape。
+        /// </summary>
+        public static TileValueShape CreateCoordinateOnly(List<Vector2I> globalPositions)
+        {
+            if (globalPositions == null)
+            {
+                throw new ArgumentNullException(nameof(globalPositions));
+            }
+
+            if (globalPositions.Count == 0)
+            {
+                return EMPTY_COORDINATE_ONLY;
+            }
+
+            return new TileValueShape(new PointListShape(globalPositions));
+        }
+
+        /// <summary>
         /// 创建一个 Tile 值形状。
         /// </summary>
         public TileValueShape(PixelShape shape, int[] tileRunIds = null) : base(shape, tileRunIds)

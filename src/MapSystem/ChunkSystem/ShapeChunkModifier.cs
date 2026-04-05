@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using Godot;
 using WorldWeaver.MapSystem.TileSystem;
 using WorldWeaver.PixelShapeSystem;
-using WorldWeaver.PixelShapeSystem.PointsShape;
 
 namespace WorldWeaver.MapSystem.ChunkSystem
 {
@@ -41,7 +40,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
                 tileRunIds.Add(chunkData.GetTileSingleUnchecked(tileIndex));
             }
 
-            return CreateValuedTileValueShape(globalPositions, tileRunIds);
+            return TileValueShape.CreateValued(globalPositions, tileRunIds);
         }
 
         /// <summary>
@@ -70,7 +69,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
                 tileRunIds.Add(finalTileRunId);
             }
 
-            return CreateValuedTileValueShape(globalPositions, tileRunIds);
+            return TileValueShape.CreateValued(globalPositions, tileRunIds);
         }
 
         /// <summary>
@@ -99,7 +98,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
                 tileRunIds.Add(finalTileRunId);
             }
 
-            return CreateValuedTileValueShape(globalPositions, tileRunIds);
+            return TileValueShape.CreateValued(globalPositions, tileRunIds);
         }
 
         /// <summary>
@@ -126,7 +125,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
                 globalPositions.Add(globalPosition);
             }
 
-            return CreateCoordinateOnlyTileValueShape(globalPositions);
+            return TileValueShape.CreateCoordinateOnly(globalPositions);
         }
 
         /// <summary>
@@ -155,7 +154,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
                 tileRunIds.Add(finalTileRunId);
             }
 
-            return CreateValuedTileValueShape(globalPositions, tileRunIds);
+            return TileValueShape.CreateValued(globalPositions, tileRunIds);
         }
 
         /// <summary>
@@ -182,7 +181,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
                 globalPositions.Add(globalPosition);
             }
 
-            return CreateCoordinateOnlyTileValueShape(globalPositions);
+            return TileValueShape.CreateCoordinateOnly(globalPositions);
         }
 
 
@@ -224,30 +223,5 @@ namespace WorldWeaver.MapSystem.ChunkSystem
             return true;
         }
 
-        /// <summary>
-        /// 构造带值结果 shape。
-        /// </summary>
-        private static TileValueShape CreateValuedTileValueShape(List<Vector2I> globalPositions, List<int> tileRunIds)
-        {
-            if (globalPositions.Count == 0)
-            {
-                return TileValueShape.EMPTY_VALUED;
-            }
-
-            return new TileValueShape(new PointListShape(globalPositions), tileRunIds.ToArray());
-        }
-
-        /// <summary>
-        /// 构造仅坐标结果 shape。
-        /// </summary>
-        private static TileValueShape CreateCoordinateOnlyTileValueShape(List<Vector2I> globalPositions)
-        {
-            if (globalPositions.Count == 0)
-            {
-                return TileValueShape.EMPTY_COORDINATE_ONLY;
-            }
-
-            return new TileValueShape(new PointListShape(globalPositions));
-        }
     }
 }

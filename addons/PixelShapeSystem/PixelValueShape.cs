@@ -41,9 +41,9 @@ namespace WorldWeaver.PixelShapeSystem
         public bool IsValid => !IsInvalid;
 
         /// <summary>
-        /// 底层形状的边界差值盒。
+        /// 底层形状的坐标边界范围。
         /// </summary>
-        public Rect2I BoundingBox => Shape.BoundingBox;
+        public Rect2I CoordinateBounds => Shape.CoordinateBounds;
 
         /// <summary>
         /// 创建一个挂载值数组的像素形状。

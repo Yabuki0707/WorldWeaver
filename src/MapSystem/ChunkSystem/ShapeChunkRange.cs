@@ -7,7 +7,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 {
     /// <summary>
     /// shape 区块范围缓存。
-    /// <para>构造阶段根据 shape 包围盒计算父级区块范围，并缓存对应 ChunkData 二维 range。</para>
+    /// <para>构造阶段根据 shape 的坐标边界范围计算父级区块范围，并缓存对应 ChunkData 二维 range。</para>
     /// </summary>
     internal sealed class ShapeChunkRange : IShapeChunkSlice
     {
@@ -49,12 +49,12 @@ namespace WorldWeaver.MapSystem.ChunkSystem
                 return;
             }
 
-            // 1) 根据 shape 的全局包围盒计算父级区块范围（左上/右下）。
-            Rect2I boundingBox = shape.BoundingBox;
+            // 1) 根据 shape 的全局坐标边界范围计算父级区块范围（左上/右下）。
+            Rect2I coordinateBounds = shape.CoordinateBounds;
             MinChunkPosition =
-                GlobalTilePositionConverter.ToChunkPosition(boundingBox.Position, owner.OwnerLayer.ChunkSize);
+                GlobalTilePositionConverter.ToChunkPosition(coordinateBounds.Position, owner.OwnerLayer.ChunkSize);
             MaxChunkPosition =
-                GlobalTilePositionConverter.ToChunkPosition(boundingBox.Position + boundingBox.Size, owner.OwnerLayer.ChunkSize);
+                GlobalTilePositionConverter.ToChunkPosition(coordinateBounds.Position + coordinateBounds.Size, owner.OwnerLayer.ChunkSize);
 
             // 2) 按父级区块范围初始化二维缓存。
             int width = MaxChunkPosition.X - MinChunkPosition.X + 1;
@@ -68,7 +68,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
                 {
                     ChunkPosition chunkPosition = new(MinChunkPosition.X + rangeX, MinChunkPosition.Y + rangeY);
                     Chunk chunk = owner.GetChunk(chunkPosition);
-                    if (chunk == null || chunk == Chunk.Empty || chunk.Data == null)
+                    if (chunk == null || chunk == Chunk.EMPTY || chunk.Data == null)
                     {
                         continue;
                     }
