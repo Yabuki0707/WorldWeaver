@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Godot;
 
@@ -11,11 +11,20 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
     /// </summary>
     public sealed class MutablePointListShape : PixelShape
     {
+        // ================================================================================
+        //                                  核心缓存
+        // ================================================================================
+
         /// <summary>
         /// 点列表的核心数据容器。
         /// <para>该列表按写入顺序保留所有点，包括重复点。</para>
         /// </summary>
         private readonly List<Vector2I> _points;
+
+
+        // ================================================================================
+        //                                  构造方法
+        // ================================================================================
 
         /// <summary>
         /// 创建一个空的动态点列表形状。
@@ -41,6 +50,11 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         public MutablePointListShape(params Vector2I[] points) : this((IEnumerable<Vector2I>)points)
         {
         }
+
+
+        // ================================================================================
+        //                                  点追加方法
+        // ================================================================================
 
         /// <summary>
         /// 追加一个点。
@@ -106,6 +120,11 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
             AddPoints((IEnumerable<Vector2I>)points);
         }
 
+
+        // ================================================================================
+        //                                  PixelShape基础属性
+        // ================================================================================
+
         /// <summary>
         /// 当前点列表的坐标边界范围。
         /// <para>每次访问都会基于当前列表实时计算，不额外缓存。</para>
@@ -119,6 +138,7 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
                     return new Rect2I(Vector2I.Zero, Vector2I.Zero);
                 }
 
+                // 第一个点用于初始化当前边界。
                 Vector2I firstPoint = _points[0];
                 int minX = firstPoint.X;
                 int maxX = firstPoint.X;
@@ -127,7 +147,10 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
 
                 for (int pointIndex = 1; pointIndex < _points.Count; pointIndex++)
                 {
+                    // 当前遍历到的点。
                     Vector2I point = _points[pointIndex];
+
+                    // 持续扩展边界范围。
                     minX = Math.Min(minX, point.X);
                     maxX = Math.Max(maxX, point.X);
                     minY = Math.Min(minY, point.Y);
@@ -144,6 +167,11 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         /// </summary>
         public override int PointCount => _points.Count;
 
+
+        // ================================================================================
+        //                                  迭代器
+        // ================================================================================
+
         /// <summary>
         /// 按写入顺序迭代输出所有全局坐标。
         /// </summary>
@@ -154,6 +182,11 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
                 yield return point;
             }
         }
+
+
+        // ================================================================================
+        //                                  列表与数组输出
+        // ================================================================================
 
         /// <summary>
         /// 获取当前点列表的全局坐标列表副本。
