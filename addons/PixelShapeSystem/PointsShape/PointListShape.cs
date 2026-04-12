@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Godot;
 
@@ -11,6 +11,10 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
     /// </summary>
     public sealed class PointListShape : PixelShape
     {
+        // ================================================================================
+        //                                  核心缓存
+        // ================================================================================
+
         /// <summary>
         /// 构造完成后的点数组缓存。
         /// </summary>
@@ -20,6 +24,11 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         /// 构造完成后的坐标边界范围缓存。
         /// </summary>
         private readonly Rect2I _coordinateBounds;
+
+
+        // ================================================================================
+        //                                  构造方法
+        // ================================================================================
 
         /// <summary>
         /// 创建一个空的静态点列表形状。
@@ -53,6 +62,11 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         {
         }
 
+
+        // ================================================================================
+        //                                  PixelShape基础属性
+        // ================================================================================
+
         /// <summary>
         /// 当前点列表的坐标边界范围。
         /// </summary>
@@ -64,6 +78,11 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         /// </summary>
         public override int PointCount => _points.Length;
 
+
+        // ================================================================================
+        //                                  迭代器
+        // ================================================================================
+
         /// <summary>
         /// 按原始输入顺序迭代输出所有全局坐标。
         /// </summary>
@@ -74,6 +93,11 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
                 yield return point;
             }
         }
+
+
+        // ================================================================================
+        //                                  列表与数组输出
+        // ================================================================================
 
         /// <summary>
         /// 获取当前点列表的全局坐标列表副本。
@@ -93,6 +117,7 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
                 return Array.Empty<Vector2I>();
             }
 
+            // 返回内部点缓存的数组副本，避免外部直接修改内部状态。
             Vector2I[] globalCoordinates = new Vector2I[_points.Length];
             Array.Copy(_points, globalCoordinates, _points.Length);
             return globalCoordinates;
@@ -107,6 +132,11 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
             return _points;
         }
 
+
+        // ================================================================================
+        //                                  私有方法
+        // ================================================================================
+
         /// <summary>
         /// 将输入点序列整理为点数组，并同步计算坐标边界范围。
         /// </summary>
@@ -114,8 +144,13 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         /// <returns>点数组以及对应的坐标边界范围。</returns>
         private static (Vector2I[] Points, Rect2I CoordinateBounds) BuildPoints(IEnumerable<Vector2I> points)
         {
+            // 用于保留输入顺序与重复点。
             List<Vector2I> pointList = new();
+
+            // 用于标记是否已经读取到第一个点。
             bool hasAnyPoint = false;
+
+            // 当前点序列的边界值。
             int minX = 0;
             int maxX = 0;
             int minY = 0;
@@ -127,6 +162,7 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
 
                 if (!hasAnyPoint)
                 {
+                    // 第一个点直接初始化边界。
                     minX = point.X;
                     maxX = point.X;
                     minY = point.Y;
@@ -135,6 +171,7 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
                     continue;
                 }
 
+                // 持续扩展边界范围。
                 minX = Math.Min(minX, point.X);
                 maxX = Math.Max(maxX, point.X);
                 minY = Math.Min(minY, point.Y);

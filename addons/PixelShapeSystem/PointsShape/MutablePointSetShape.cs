@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Godot;
 
@@ -11,6 +11,10 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
     /// </summary>
     public sealed class MutablePointSetShape : PixelShape
     {
+        // ================================================================================
+        //                                  核心缓存
+        // ================================================================================
+
         /// <summary>
         /// 尚未归并到稳定缓存中的新增点。
         /// </summary>
@@ -35,6 +39,11 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         /// 当前是否存在尚未归并到稳定缓存的新增点。
         /// </summary>
         private bool _isDirty;
+
+
+        // ================================================================================
+        //                                  构造方法
+        // ================================================================================
 
         /// <summary>
         /// 创建一个空的动态点集合形状。
@@ -65,6 +74,11 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         public MutablePointSetShape(params Vector2I[] points) : this((IEnumerable<Vector2I>)points)
         {
         }
+
+
+        // ================================================================================
+        //                                  点追加方法
+        // ================================================================================
 
         /// <summary>
         /// 追加一个点。
@@ -101,6 +115,7 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
                 throw new ArgumentNullException(nameof(points));
             }
 
+            // 标记本次追加过程中是否接受过至少一个新点。
             bool hasAnyAcceptedPoint = false;
 
             foreach (Vector2I point in points)
@@ -129,6 +144,7 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
                 throw new ArgumentNullException(nameof(points));
             }
 
+            // 标记本次追加过程中是否接受过至少一个新点。
             bool hasAnyAcceptedPoint = false;
 
             for (int pointIndex = 0; pointIndex < points.Count; pointIndex++)
@@ -153,6 +169,11 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         {
             AddPoints((IEnumerable<Vector2I>)points);
         }
+
+
+        // ================================================================================
+        //                                  PixelShape基础属性
+        // ================================================================================
 
         /// <summary>
         /// 当前点集合的坐标边界范围。
@@ -180,6 +201,11 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
             }
         }
 
+
+        // ================================================================================
+        //                                  迭代器
+        // ================================================================================
+
         /// <summary>
         /// 按稳定顺序迭代输出所有全局坐标。
         /// </summary>
@@ -192,6 +218,11 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
                 yield return point;
             }
         }
+
+
+        // ================================================================================
+        //                                  列表与数组输出
+        // ================================================================================
 
         /// <summary>
         /// 获取当前点集合的全局坐标列表副本。
@@ -214,6 +245,7 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
                 return Array.Empty<Vector2I>();
             }
 
+            // 返回稳定缓存的数组副本，避免外部直接修改内部状态。
             Vector2I[] globalCoordinates = new Vector2I[_pointsCache.Length];
             Array.Copy(_pointsCache, globalCoordinates, _pointsCache.Length);
             return globalCoordinates;
@@ -228,6 +260,11 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
             EnsureNormalized();
             return _pointsCache;
         }
+
+
+        // ================================================================================
+        //                                  私有方法
+        // ================================================================================
 
         /// <summary>
         /// 将待归并列表中的新增点刷入稳定缓存。
@@ -246,7 +283,10 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
                 return;
             }
 
+            // 标记当前是否已存在稳定缓存。
             bool hasAnyNormalizedPoint = _pointsCache.Length > 0;
+
+            // 当前集合的边界值。
             int minX;
             int maxX;
             int minY;
@@ -254,17 +294,23 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
 
             if (hasAnyNormalizedPoint)
             {
+                // 若已有稳定缓存，则先用缓存边界作为初值。
                 minX = _coordinateBoundsCache.Position.X;
                 maxX = _coordinateBoundsCache.Position.X + _coordinateBoundsCache.Size.X;
                 minY = _coordinateBoundsCache.Position.Y;
                 maxY = _coordinateBoundsCache.Position.Y + _coordinateBoundsCache.Size.Y;
+
+                // 合并旧缓存与待归并点。
                 Vector2I[] mergedCache = new Vector2I[_pointsCache.Length + _pendingPoints.Count];
                 Array.Copy(_pointsCache, mergedCache, _pointsCache.Length);
 
                 for (int pointIndex = 0; pointIndex < _pendingPoints.Count; pointIndex++)
                 {
+                    // 当前待归并的点。
                     Vector2I point = _pendingPoints[pointIndex];
                     mergedCache[_pointsCache.Length + pointIndex] = point;
+
+                    // 同步扩展边界范围。
                     minX = Math.Min(minX, point.X);
                     maxX = Math.Max(maxX, point.X);
                     minY = Math.Min(minY, point.Y);
@@ -275,7 +321,10 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
             }
             else
             {
+                // 若当前没有稳定缓存，则直接以待归并点构建首份缓存。
                 _pointsCache = _pendingPoints.ToArray();
+
+                // 第一个点用于初始化边界。
                 Vector2I firstPoint = _pendingPoints[0];
                 minX = firstPoint.X;
                 maxX = firstPoint.X;
@@ -284,7 +333,10 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
 
                 for (int pointIndex = 1; pointIndex < _pendingPoints.Count; pointIndex++)
                 {
+                    // 当前待归并的点。
                     Vector2I point = _pendingPoints[pointIndex];
+
+                    // 持续扩展边界范围。
                     minX = Math.Min(minX, point.X);
                     maxX = Math.Max(maxX, point.X);
                     minY = Math.Min(minY, point.Y);
@@ -292,6 +344,7 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
                 }
             }
 
+            // 刷新稳定缓存后，更新边界并清空待归并列表。
             _coordinateBoundsCache = new Rect2I(new Vector2I(minX, minY), new Vector2I(maxX - minX, maxY - minY));
             _pendingPoints.Clear();
             _isDirty = false;
