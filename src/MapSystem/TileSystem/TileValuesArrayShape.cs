@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Godot;
 using WorldWeaver.PixelShapeSystem;
 using WorldWeaver.PixelShapeSystem.PointsShape;
+using WorldWeaver.PixelShapeSystem.ValueShape;
 
 namespace WorldWeaver.MapSystem.TileSystem
 {
@@ -103,7 +104,7 @@ namespace WorldWeaver.MapSystem.TileSystem
         /// <summary>
         /// 获取全局坐标与 TileRunId 索引的配对迭代器。
         /// </summary>
-        public new IEnumerable<(Vector2I GPosition, int ValueIndex)> GetGlobalValueIndexIterator()
+        public new IEnumerable<(Vector2I GlobalPosition, int ValueIndex)> GetGlobalValueIndexIterator()
         {
             return base.GetGlobalValueIndexIterator();
         }
