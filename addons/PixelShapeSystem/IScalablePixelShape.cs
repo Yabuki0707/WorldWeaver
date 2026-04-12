@@ -9,10 +9,6 @@ namespace WorldWeaver.PixelShapeSystem
     /// </summary>
     public interface IScalablePixelShape
     {
-        /// <summary>
-        /// 图形相对于原始形状的大小扩展倍率。
-        /// <para>该值描述图形在 X 与 Y 方向上的扩展比例，而不是包围盒跨度。</para>
-        /// </summary>
-        Vector2I Scale { get; }
+        //暂时作为占位存在，后续会引入矩阵
     }
 }
