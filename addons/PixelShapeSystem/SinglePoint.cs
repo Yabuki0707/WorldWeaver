@@ -71,7 +71,7 @@ namespace WorldWeaver.PixelShapeSystem
         /// </summary>
         public override List<Vector2I> GetGlobalCoordinateList()
         {
-            return new List<Vector2I> { CoordinateBounds.Position };
+            return [CoordinateBounds.Position];
         }
 
 
@@ -84,7 +84,7 @@ namespace WorldWeaver.PixelShapeSystem
         /// </summary>
         public override Vector2I[] GetGlobalCoordinateArray()
         {
-            return new[] { CoordinateBounds.Position };
+            return [CoordinateBounds.Position];
         }
     }
 }

@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 using Godot;
 using WorldWeaver.MapSystem.TileSystem;
 
-namespace WorldWeaver.MapSystem.ChunkSystem
+namespace WorldWeaver.MapSystem.ChunkSystem.Data
 {
     /// <summary>
     /// Tile 变更类型。

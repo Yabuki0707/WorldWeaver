@@ -1,5 +1,6 @@
 using System;
 using Godot;
+using WorldWeaver.MapSystem.ChunkSystem.Data;
 using WorldWeaver.MapSystem.ChunkSystem.State;
 using WorldWeaver.MapSystem.ChunkSystem.State.Handler;
 

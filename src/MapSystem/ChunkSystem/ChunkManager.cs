@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using System.Collections.Generic;
+using WorldWeaver.MapSystem.ChunkSystem.Data;
 using WorldWeaver.MapSystem.ChunkSystem.State;
 using WorldWeaver.MapSystem.ChunkSystem.State.Handler;
 using WorldWeaver.MapSystem.LayerSystem;
@@ -12,13 +13,13 @@ namespace WorldWeaver.MapSystem.ChunkSystem
     /// Tile 变化事件参数。
     /// <para>事件统一使用 <see cref="TileValueShape"/> 承载变化点与变化后的 TileRunId。</para>
     /// </summary>
-    public class TilesChangedEventArgs(TileValueShape tileValueShape, TileChangeType changeType) : EventArgs
+    public class TilesChangedEventArgs(TileValuesArrayShape tileValueShape, TileChangeType changeType) : EventArgs
     {
         /// <summary>
         /// 变化点形状与变化后的 TileRunId。
         /// <para>其中坐标使用全局坐标。</para>
         /// </summary>
-        public TileValueShape TileValueShape { get; } = tileValueShape;
+        public TileValuesArrayShape TileValueShape { get; } = tileValueShape;
 
         /// <summary>
         /// 变化类型。
@@ -95,11 +96,6 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         private readonly Dictionary<long, Chunk> _chunks;
 
         /// <summary>
-        /// 待更新区块集合，避免每帧遍历全部区块。
-        /// </summary>
-        private readonly HashSet<Chunk> _updatingChunks = [];
-
-        /// <summary>
         /// 区块创建事件。
         /// </summary>
         public event Action<ChunkPosition> ChunkCreated;
@@ -140,6 +136,12 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         /// </summary>
         public ChunkDataOperator DataOperator { get; }
 
+        /// <summary>
+        /// 区块加载请求处理器。
+        /// <para>负责接收区块加载请求，并将请求项合并进更新表。</para>
+        /// </summary>
+        public ChunkLoadRequestProcessor LoadRequestProcessor { get; }
+
 
         /*******************************
                   构造
@@ -154,6 +156,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
             OwnerLayer = owner;
             _chunks = new Dictionary<long, Chunk>(128);
             DataOperator = new ChunkDataOperator(this);
+            LoadRequestProcessor = new ChunkLoadRequestProcessor();
         }
 
 
@@ -197,9 +200,8 @@ namespace WorldWeaver.MapSystem.ChunkSystem
             string uid = Chunk.GenerateUid(OwnerLayer.WorldId, OwnerLayer.LayerId, chunkPosition);
             Chunk createdChunk = new(chunkPosition, uid);
 
-            // 同步写入索引表和更新集合，确保下一帧会参与状态驱动。
+            // 同步写入索引表，后续状态驱动由本 tick 的更新表统一决定。
             _chunks[key] = createdChunk;
-            _updatingChunks.Add(createdChunk);
             ChunkCreated?.Invoke(chunkPosition);
             return true;
         }
@@ -215,10 +217,19 @@ namespace WorldWeaver.MapSystem.ChunkSystem
             {
                 return false;
             }
-            // 先从两处容器移除，再发事件，保证事件时刻状态一致。
-            _updatingChunks.Remove(chunk);
+
+            // 删除成功后再发事件，保证事件回调观察到的是最新状态。
             ChunkRemoved?.Invoke(chunk.CPosition);
             return true;
+        }
+
+        /// <summary>
+        /// 提交一份新的区块加载请求表。
+        /// <para>请求表中的区块会立即并入更新表；若同一区块重复出现，则保留枚举值更大的稳定状态。</para>
+        /// </summary>
+        public void HandleChunkLoadRequests(ChunkLoadRequestTable requestTable)
+        {
+            LoadRequestProcessor.HandleRequestTable(requestTable);
         }
 
 
@@ -227,86 +238,153 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         ********************************/
 
         /// <summary>
-        /// 驱动所有活跃区块的状态推进。
+        /// 驱动当前更新表与现有区块集合对应的一轮状态推进。
         /// <para>流程如下：</para>
-        /// <para>1. 让 Chunk/State 先给出本轮是否存在目标节点与对应 handler；</para>
-        /// <para>2. 由 Manager 执行 handler；</para>
-        /// <para>3. 执行成功后，调用 Chunk.StateUpdate() 推进状态；</para>
-        /// <para>4. 根据推进结果统一广播状态更新事件。</para>
+        /// <para>1. 先遍历现有区块：若更新表中存在该区块，则按更新表目标推进；否则按 <see cref="ChunkStateNode.Exit"/> 推进；</para>
+        /// <para>2. 每处理完一个现有区块，都从更新表中移除它；</para>
+        /// <para>3. 再遍历更新表中剩余项：这些区块当前尚不存在，因此先创建、再设定目标稳定节点、再推进一次状态；</para>
+        /// <para>4. 所有当前状态已到达 <see cref="ChunkStateNode.Exit"/> 的区块统一在本轮末尾移除。</para>
         /// </summary>
         public void Update()
         {
-            // 无活跃区块时直接退出，减少空帧开销。
-            if (_updatingChunks.Count == 0)
+            // 当更新表为空且当前也没有任何区块时，本轮没有可推进对象。
+            if (LoadRequestProcessor.UpdateTable.IsEmpty && _chunks.Count == 0)
             {
                 return;
             }
 
-            // 延迟删除列表：避免遍历中直接改动 _updatingChunks。
-            List<Chunk> toRemove = [];
-            foreach (Chunk chunk in _updatingChunks)
-            {
-                // 第一步：让 Chunk/State 给出“是否需要推进以及用哪个处理器”。
-                StateHandler handler = chunk.GetStateUpdateHandler();
+            // 延迟删除列表：避免遍历过程中直接改动 _chunks。
+            List<ChunkPosition> toRemove = [];
 
-                // 约定：handler 为 null 时，表示本轮无更新需求。
-                if (handler == null)
+            // 先处理当前已经存在于 _chunks 中的区块。
+            foreach (Chunk chunk in new List<Chunk>(_chunks.Values))
+            {
+                // 若更新表里已经存在该区块，则按更新表目标推进；否则本轮目标默认为 Exit。
+                ChunkStateNode targetStableNode = LoadRequestProcessor.UpdateTable.TryGetTargetStableNode(
+                    chunk.CPosition,
+                    out ChunkStateNode requestedStableNode)
+                    ? requestedStableNode
+                    : ChunkStateNode.Exit;
+
+                // 现有区块统一显式刷新最终目标稳定节点。
+                if (chunk.State.FinalStableNode != targetStableNode)
+                {
+                    chunk.State.SetFinalTarget(targetStableNode);
+                }
+
+                // 现有区块处理完后，立即把对应更新项从更新表中移除。
+                LoadRequestProcessor.UpdateTable.RemoveChunk(chunk.CPosition);
+
+                // 对当前区块执行一轮状态推进；若推进后到达 Exit，则登记到延迟删除列表。
+                ChunkStateNode updatedStateNode = UpdateChunkState(chunk);
+                if (updatedStateNode == ChunkStateNode.Exit)
+                {
+                    toRemove.Add(chunk.CPosition);
+                }
+            }
+
+            // 再处理更新表里剩下的区块：这些区块当前一定还不存在，因此需要先创建。
+            List<KeyValuePair<ChunkPosition, ChunkStateNode>> pendingCreateEntries = [.. LoadRequestProcessor.UpdateTable];
+            foreach (KeyValuePair<ChunkPosition, ChunkStateNode> updateEntry in pendingCreateEntries)
+            {
+                // 先创建缺失区块，再按更新表写入最终目标稳定节点。
+                CreateChunk(updateEntry.Key);
+                Chunk createdChunk = GetChunk(updateEntry.Key);
+                
+                // 创建失败时本轮直接跳过，统一在循环结束后清空更新表。
+                if (createdChunk == null)
                 {
                     continue;
                 }
 
-                // 第二步：由 Manager 执行处理器，不让 Chunk/State 自行执行业务副作用。
-                StateExecutionResult executionResult = ExecuteStateHandler(chunk, handler);
-                switch (executionResult)
+                // 新建区块同样显式刷新最终目标稳定节点。
+                if (createdChunk.State.FinalStableNode != updateEntry.Value)
                 {
-                    case StateExecutionResult.Success:
-                        // 第三步：副作用成功后才提交状态推进。
-                        ChunkStateUpdateResult updateResult = chunk.StateUpdate();
-                        if (updateResult == null)
-                        {
-                            continue;
-                        }
+                    createdChunk.State.SetFinalTarget(updateEntry.Value);
+                }
 
-                        // 统一广播“节点推进成功”事件。
-                        OnChunkStateUpdated(new ChunkStateUpdatedEventArgs(
-                            chunk.CPosition,
-                            updateResult.PreviousNode,
-                            updateResult.NewNode,
-                            updateResult.IsNewNodeStable));
-
-                        // 若推进后进入了新稳定节点，再额外广播稳定节点事件。
-                        if (updateResult.IsNewNodeStable &&
-                            updateResult.PreviousStableNode.HasValue &&
-                            updateResult.NewStableNode.HasValue &&
-                            updateResult.PreviousStableNode.Value != updateResult.NewStableNode.Value)
-                        {
-                            OnChunkStateStableReached(new ChunkStateStableReachedEventArgs(
-                                chunk.CPosition,
-                                updateResult.PreviousStableNode.Value,
-                                updateResult.NewStableNode.Value));
-                        }
-
-                        if (chunk.State.CurrentNode == ChunkStateNode.Exit)
-                        {
-                            // Exit 节点统一延迟到循环后批量移除。
-                            toRemove.Add(chunk);
-                        }
-
-                        break;
-
-                    case StateExecutionResult.PermanentFailure:
-                    case StateExecutionResult.RetryLater:
-                        // 失败分支交给 ChunkState 内部策略处理（回退/阻塞/等待重试）。
-                        chunk.HandleStateExecutionFailure(executionResult);
-                        break;
+                // 对新建区块执行一轮状态推进；若推进后到达 Exit，则登记到延迟删除列表。
+                ChunkStateNode updatedStateNode = UpdateChunkState(createdChunk);
+                if (updatedStateNode == ChunkStateNode.Exit)
+                {
+                    toRemove.Add(createdChunk.CPosition);
                 }
             }
 
+            // 剩余更新项处理完成后，统一清空更新表。
+            LoadRequestProcessor.UpdateTable.Clear();
+
             // 统一在遍历结束后做删除，避免集合修改异常。
-            foreach (Chunk chunk in toRemove)
+            foreach (ChunkPosition chunkPosition in toRemove)
             {
-                RemoveChunk(chunk.CPosition);
+                RemoveChunk(chunkPosition);
             }
+        }
+
+        /// <summary>
+        /// 对指定区块执行一轮状态推进。
+        /// <para>该方法会让 Chunk/State 选择目标节点、执行处理器、提交状态，并返回推进后的当前状态节点。</para>
+        /// </summary>
+        private ChunkStateNode UpdateChunkState(Chunk chunk)
+        {
+            // 当前状态已经是 Exit 的区块无需再推进，直接返回 Exit。
+            if (chunk.StateNode == ChunkStateNode.Exit)
+            {
+                return ChunkStateNode.Exit;
+            }
+
+            // 先让 Chunk/State 给出“是否需要推进以及使用哪个处理器”。
+            StateHandler handler = chunk.GetStateUpdateHandler();
+            if (handler == null)
+            {
+                return chunk.StateNode;
+            }
+
+            // 然后由 Manager 统一执行当前节点的状态处理器。
+            StateExecutionResult executionResult = ExecuteStateHandler(chunk, handler);
+            switch (executionResult)
+            {
+                case StateExecutionResult.Success:
+                {
+                    // 处理器成功后，才允许提交状态推进结果。
+                    ChunkStateUpdateResult updateResult = chunk.StateUpdate();
+                    if (updateResult == null)
+                    {
+                        return chunk.StateNode;
+                    }
+
+                    // 统一广播“节点推进成功”事件。
+                    OnChunkStateUpdated(new ChunkStateUpdatedEventArgs(
+                        chunk.CPosition,
+                        updateResult.PreviousNode,
+                        updateResult.NewNode,
+                        updateResult.IsNewNodeStable));
+
+                    // 若推进后进入了新稳定节点，再额外广播稳定节点事件。
+                    if (updateResult.IsNewNodeStable &&
+                        updateResult.PreviousStableNode.HasValue &&
+                        updateResult.NewStableNode.HasValue &&
+                        updateResult.PreviousStableNode.Value != updateResult.NewStableNode.Value)
+                    {
+                        OnChunkStateStableReached(new ChunkStateStableReachedEventArgs(
+                            chunk.CPosition,
+                            updateResult.PreviousStableNode.Value,
+                            updateResult.NewStableNode.Value));
+                    }
+
+                    // 返回推进后的最新节点，由上层决定是否登记删除。
+                    return updateResult.NewNode;
+                }
+
+                case StateExecutionResult.PermanentFailure:
+                case StateExecutionResult.RetryLater:
+                    // 失败分支交给 ChunkState 内部策略处理（回退/阻塞/等待重试）。
+                    chunk.HandleStateExecutionFailure(executionResult);
+                    return chunk.StateNode;
+            }
+
+            // 兜底返回当前节点，保证所有路径都有明确结果。
+            return chunk.StateNode;
         }
 
         /// <summary>
