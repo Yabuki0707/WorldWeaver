@@ -20,7 +20,7 @@ namespace WorldWeaver.MapSystem.TileSystem
         /// <summary>
         /// 资源目录常量，存储tiles所在的位置
         /// </summary>
-        private static readonly string _resourceDir = ProjectSettings.GlobalizePath("res://assets/tiles");
+        private static readonly string _RESOURCE_DIR = ProjectSettings.GlobalizePath("res://assets/tiles");
 
 
         /// <summary>
@@ -36,27 +36,27 @@ namespace WorldWeaver.MapSystem.TileSystem
         /// <summary>
         /// TileType种类列表，索引=运行ID
         /// </summary>
-        private static readonly List<TileType> _tileTypes = [];
+        private static readonly List<TileType> _TILE_TYPES = [];
 
         /// <summary>
         /// TileType名称与运行ID对应的字典
         /// </summary>
-        private static readonly Dictionary<string, int> _tileTypeNameToRunId = [];
+        private static readonly Dictionary<string, int> _TILE_TYPE_NAME_TO_RUN_ID = [];
 
         /// <summary>
         /// 最小可用运行ID（内部计数器，存储下一个可分配的RunId；RunId为连续分配的只增ID，不支持删除）
         /// </summary>
-        private static int _minAvailableRunId = 1;
+        private static int minAvailableRunId = 1;
 
         /// <summary>
         /// 获取最小可用运行ID（RunId为连续分配的只增ID，不支持删除）
         /// </summary>
-        public static int MinAvailableRunId => _minAvailableRunId;
+        public static int MinAvailableRunId => minAvailableRunId;
 
         /// <summary>
         /// 获取TileType种类总数，总数等于最小可分配id-1
         /// </summary>
-        public static int TypeCount => _minAvailableRunId - 1;
+        public static int TypeCount => minAvailableRunId - 1;
 
 
         /// <summary>
@@ -90,21 +90,22 @@ namespace WorldWeaver.MapSystem.TileSystem
                 return;
             }
 
-            if (!Directory.Exists(_resourceDir))
+            if (!Directory.Exists(_RESOURCE_DIR))
             {
-                GD.PushError($"无法打开目录: {_resourceDir}");
+                GD.PushError($"无法打开目录: {_RESOURCE_DIR}");
                 return;
             }
-
-            // 在索引0处添加空的TileType
-            _tileTypes.Add(new TileType
+            // 在索引空处添加空的TileType
+            for (int emptyTileType = 0; emptyTileType < minAvailableRunId; emptyTileType++)
             {
-                TileTypeName = "empty",
-                TileTypeRunId = 0
-            });
-            
+                _TILE_TYPES.Add(new TileType
+                {
+                    TileTypeName = "empty",
+                    TileTypeRunId = 0
+                });
+            }
             // 读取文件并排序
-            string[] files = Directory.GetFiles(_resourceDir, "*.json");
+            string[] files = Directory.GetFiles(_RESOURCE_DIR, "*.json");
             Array.Sort(files, StringComparer.Ordinal); 
             // 对文件进行遍历
             foreach (string filePath in files)
@@ -142,21 +143,21 @@ namespace WorldWeaver.MapSystem.TileSystem
                     }
 
                     // 检测重复的TileTypeName（卫语句）
-                    if (_tileTypeNameToRunId.ContainsKey(tileType.TileTypeName))
+                    if (_TILE_TYPE_NAME_TO_RUN_ID.ContainsKey(tileType.TileTypeName))
                     {
                         GD.PushError($"跳过重复的TileTypeName: '{tileType.TileTypeName}'");
                         continue;
                     }
 
                     // 使用最小可用运行ID分配编号
-                    tileType.TileTypeRunId = _minAvailableRunId;
-                    _minAvailableRunId++;
+                    tileType.TileTypeRunId = minAvailableRunId;
+                    minAvailableRunId++;
                     
                     // 加入到列表中（索引=运行ID）
-                    _tileTypes.Add(tileType);
+                    _TILE_TYPES.Add(tileType);
                     
                     // 加入到tileTypeName与运行ID对应的字典
-                    _tileTypeNameToRunId[tileType.TileTypeName] = tileType.TileTypeRunId;
+                    _TILE_TYPE_NAME_TO_RUN_ID[tileType.TileTypeName] = tileType.TileTypeRunId;
                 }
                 catch (Exception ex)
                 {
@@ -167,8 +168,8 @@ namespace WorldWeaver.MapSystem.TileSystem
             // 打印TileType信息（如果需要）
             if (printTileTypes)
             {
-                GD.Print($"已加载 {_tileTypes.Count} 个TileType:");
-                foreach (var tileType in _tileTypes)
+                GD.Print($"已加载 {_TILE_TYPES.Count} 个TileType:");
+                foreach (var tileType in _TILE_TYPES)
                 {
                     GD.Print(tileType.ToString());
                 }
@@ -201,21 +202,21 @@ namespace WorldWeaver.MapSystem.TileSystem
                 return 0;
             }
 
-            if (_tileTypeNameToRunId.ContainsKey(tileType.TileTypeName))
+            if (_TILE_TYPE_NAME_TO_RUN_ID.ContainsKey(tileType.TileTypeName))
             {
                 GD.PushError($"TileType名称 '{tileType.TileTypeName}' 已存在，无法重复添加");
                 return 0;
             }
 
             // 使用最小可用运行ID分配编号
-            tileType.TileTypeRunId = _minAvailableRunId;
-            _minAvailableRunId++;
+            tileType.TileTypeRunId = minAvailableRunId;
+            minAvailableRunId++;
             
             // 添加到列表
-            _tileTypes.Add(tileType);
+            _TILE_TYPES.Add(tileType);
             
             // 添加到字典
-            _tileTypeNameToRunId[tileType.TileTypeName] = tileType.TileTypeRunId;
+            _TILE_TYPE_NAME_TO_RUN_ID[tileType.TileTypeName] = tileType.TileTypeRunId;
 
             return tileType.TileTypeRunId;
         }
@@ -235,9 +236,9 @@ namespace WorldWeaver.MapSystem.TileSystem
             if (!EnsureInitialized())
                 return null;
 
-            if (runId >= 0 && runId < _tileTypes.Count)
+            if (runId >= 0 && runId < _TILE_TYPES.Count)
             {
-                return _tileTypes[runId];
+                return _TILE_TYPES[runId];
             }
             return null;
         }
@@ -255,9 +256,9 @@ namespace WorldWeaver.MapSystem.TileSystem
 
             if (name == null) // 防御性检查
                 return null;
-            if (_tileTypeNameToRunId.TryGetValue(name, out int runId))// 检查是否存在对应的运行ID
+            if (_TILE_TYPE_NAME_TO_RUN_ID.TryGetValue(name, out int runId))// 检查是否存在对应的运行ID
             {
-                return _tileTypes[runId];// 返回对应的TileType数据
+                return _TILE_TYPES[runId];// 返回对应的TileType数据
             }
             return null;
         }
@@ -275,7 +276,7 @@ namespace WorldWeaver.MapSystem.TileSystem
 
             if (name == null) // 防御性检查
                 return 0;
-            if (_tileTypeNameToRunId.TryGetValue(name, out int runId))// 检查是否存在对应的运行ID
+            if (_TILE_TYPE_NAME_TO_RUN_ID.TryGetValue(name, out int runId))// 检查是否存在对应的运行ID
             {
                 return runId;// 返回对应的运行ID
             }
@@ -293,9 +294,9 @@ namespace WorldWeaver.MapSystem.TileSystem
             if (!EnsureInitialized())
                 return null;
 
-            if (runId >= 0 && runId < _tileTypes.Count)
+            if (runId >= 0 && runId < _TILE_TYPES.Count)
             {
-                return _tileTypes[runId].TileTypeName;
+                return _TILE_TYPES[runId].TileTypeName;
             }
             return null;
         }
@@ -313,7 +314,7 @@ namespace WorldWeaver.MapSystem.TileSystem
 
             if (name == null) // 防御性检查
                 return false;
-            return _tileTypeNameToRunId.ContainsKey(name);
+            return _TILE_TYPE_NAME_TO_RUN_ID.ContainsKey(name);
         }
 
 
@@ -327,7 +328,7 @@ namespace WorldWeaver.MapSystem.TileSystem
             if (!EnsureInitialized())
                 return false;
 
-            return runId >= 0 && runId < _tileTypes.Count;
+            return runId >= 0 && runId < _TILE_TYPES.Count;
         }
 
 

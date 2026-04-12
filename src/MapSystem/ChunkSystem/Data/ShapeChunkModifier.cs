@@ -1,13 +1,14 @@
-using System.Collections.Generic;
 using Godot;
 using WorldWeaver.MapSystem.TileSystem;
 using WorldWeaver.PixelShapeSystem;
 
-namespace WorldWeaver.MapSystem.ChunkSystem
+namespace WorldWeaver.MapSystem.ChunkSystem.Data
 {
     /// <summary>
     /// Shape 修改器（静态）。
-    /// <para>职责：对区块切片接口给出的 ChunkData 访问能力执行逐点映射与原子操作。</para>
+    /// <para>职责：对外部提供的区块读取策略执行逐点映射与原子操作。</para>
+    /// <para>注意：本类只负责“执行修改/读取”，不负责判断应该使用哪种区块读取策略。</para>
+    /// <para>策略判断与创建统一由 <see cref="ChunkDataOperator"/> 负责。</para>
     /// <para>关键约束：</para>
     /// <para>1. 每个点先转“父级全局区块坐标 + 局部坐标”；</para>
     /// <para>2. 父级区块坐标映射到二维数组索引；</para>
@@ -18,17 +19,16 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         /// <summary>
         /// 按 shape 读取命中点值（只读操作）。
         /// </summary>
-        internal static TileValueShape GetTiles(PixelShape shape, IShapeChunkSlice chunkSlice, MapElementSize chunkSize)
+        internal static TileValuesArrayShape GetTiles(PixelShape shape, IShapeChunkReadStrategy readStrategy, MapElementSize chunkSize)
         {
-            List<Vector2I> globalPositions = [];
-            List<int> tileRunIds = [];
+            TileValuesArrayShape resultShape = CreateResultTileValueShape(shape);
 
-            // 逐点处理：全局坐标 -> (父级区块坐标 + 局部坐标 -> tileIndex) -> 原子读取。
-            foreach (Vector2I globalPosition in shape.GetGlobalCoordinateIterator())
+            // 使用坐标与值索引迭代器原地写回，未命中项默认保持 0。
+            foreach ((Vector2I globalPosition, int valueIndex) in resultShape.GetGlobalValueIndexIterator())
             {
                 if (!TryResolveChunkDataAndTileIndex(
                         globalPosition,
-                        chunkSlice,
+                        readStrategy,
                         chunkSize,
                         out ChunkData chunkData,
                         out int tileIndex))
@@ -36,27 +36,25 @@ namespace WorldWeaver.MapSystem.ChunkSystem
                     continue;
                 }
 
-                globalPositions.Add(globalPosition);
-                tileRunIds.Add(chunkData.GetTileSingleUnchecked(tileIndex));
+                resultShape.TileRunIds[valueIndex] = chunkData.GetTileSingleUnchecked(tileIndex);
             }
 
-            return TileValueShape.CreateValued(globalPositions, tileRunIds);
+            return resultShape;
         }
 
         /// <summary>
         /// 按统一值执行设置。
         /// </summary>
-        internal static TileValueShape SetTiles(TileRegion tileRegion, IShapeChunkSlice chunkSlice, MapElementSize chunkSize)
+        internal static TileValuesArrayShape SetTiles(TileRegion tileRegion, IShapeChunkReadStrategy readStrategy, MapElementSize chunkSize)
         {
-            List<Vector2I> globalPositions = [];
-            List<int> tileRunIds = [];
+            TileValuesArrayShape resultShape = CreateResultTileValueShape(tileRegion.Shape);
 
-            // 逐点映射并原子写入：能映射到已加载 chunk.Data 才执行 Set。
-            foreach (Vector2I globalPosition in tileRegion.Shape.GetGlobalCoordinateIterator())
+            // 逐点映射并原子写入：未命中项保留 0，命中项写入最终结果值。
+            foreach ((Vector2I globalPosition, int valueIndex) in resultShape.GetGlobalValueIndexIterator())
             {
                 if (!TryResolveChunkDataAndTileIndex(
                         globalPosition,
-                        chunkSlice,
+                        readStrategy,
                         chunkSize,
                         out ChunkData chunkData,
                         out int tileIndex))
@@ -64,28 +62,27 @@ namespace WorldWeaver.MapSystem.ChunkSystem
                     continue;
                 }
 
-                int finalTileRunId = chunkData.SetTileSingleUnchecked(tileIndex, tileRegion.TileRunId);
-                globalPositions.Add(globalPosition);
-                tileRunIds.Add(finalTileRunId);
+                resultShape.TileRunIds[valueIndex] = chunkData.SetTileSingleUnchecked(tileIndex, tileRegion.TileRunId);
             }
 
-            return TileValueShape.CreateValued(globalPositions, tileRunIds);
+            return resultShape;
         }
 
         /// <summary>
         /// 按逐点值执行设置。
         /// </summary>
-        internal static TileValueShape SetTiles(TileValueShape tileValueShape, IShapeChunkSlice chunkSlice, MapElementSize chunkSize)
+        internal static TileValuesArrayShape SetTiles(TileValuesArrayShape tileValueShape, IShapeChunkReadStrategy readStrategy, MapElementSize chunkSize)
         {
-            List<Vector2I> globalPositions = [];
-            List<int> tileRunIds = [];
+            TileValuesArrayShape resultShape = CreateResultTileValueShape(tileValueShape.Shape);
 
-            // 逐点映射并原子写入：使用每个点自带的 tileRunId。
-            foreach ((Vector2I globalPosition, int tileRunId) in tileValueShape.GetGlobalValueIterator())
+            // 逐点映射并原子写入：输入值按同一点序读取，未命中项结果保留 0。
+            foreach ((Vector2I globalPosition, int valueIndex) in resultShape.GetGlobalValueIndexIterator())
             {
+                int sourceTileRunId = tileValueShape.TileRunIds[valueIndex];
+
                 if (!TryResolveChunkDataAndTileIndex(
                         globalPosition,
-                        chunkSlice,
+                        readStrategy,
                         chunkSize,
                         out ChunkData chunkData,
                         out int tileIndex))
@@ -93,27 +90,25 @@ namespace WorldWeaver.MapSystem.ChunkSystem
                     continue;
                 }
 
-                int finalTileRunId = chunkData.SetTileSingleUnchecked(tileIndex, tileRunId);
-                globalPositions.Add(globalPosition);
-                tileRunIds.Add(finalTileRunId);
+                resultShape.TileRunIds[valueIndex] = chunkData.SetTileSingleUnchecked(tileIndex, sourceTileRunId);
             }
 
-            return TileValueShape.CreateValued(globalPositions, tileRunIds);
+            return resultShape;
         }
 
         /// <summary>
         /// 按 shape 逻辑移除。
         /// </summary>
-        internal static TileValueShape RemoveTiles(PixelShape shape, IShapeChunkSlice chunkSlice, MapElementSize chunkSize)
+        internal static TileValuesArrayShape RemoveTiles(PixelShape shape, IShapeChunkReadStrategy readStrategy, MapElementSize chunkSize)
         {
-            List<Vector2I> globalPositions = [];
+            TileValuesArrayShape resultShape = CreateResultTileValueShape(shape);
 
-            // 逐点映射并原子移除：Remove 不携带 values。
-            foreach (Vector2I globalPosition in shape.GetGlobalCoordinateIterator())
+            // 逐点映射并原子移除：未命中项保留 0，命中项记录移除后的最终值。
+            foreach ((Vector2I globalPosition, int valueIndex) in resultShape.GetGlobalValueIndexIterator())
             {
                 if (!TryResolveChunkDataAndTileIndex(
                         globalPosition,
-                        chunkSlice,
+                        readStrategy,
                         chunkSize,
                         out ChunkData chunkData,
                         out int tileIndex))
@@ -121,27 +116,25 @@ namespace WorldWeaver.MapSystem.ChunkSystem
                     continue;
                 }
 
-                chunkData.RemoveTileSingleUnchecked(tileIndex);
-                globalPositions.Add(globalPosition);
+                resultShape.TileRunIds[valueIndex] = chunkData.RemoveTileSingleUnchecked(tileIndex);
             }
 
-            return TileValueShape.CreateCoordinateOnly(globalPositions);
+            return resultShape;
         }
 
         /// <summary>
         /// 按 shape 恢复。
         /// </summary>
-        internal static TileValueShape RestoreTiles(PixelShape shape, IShapeChunkSlice chunkSlice, MapElementSize chunkSize)
+        internal static TileValuesArrayShape RestoreTiles(PixelShape shape, IShapeChunkReadStrategy readStrategy, MapElementSize chunkSize)
         {
-            List<Vector2I> globalPositions = [];
-            List<int> tileRunIds = [];
+            TileValuesArrayShape resultShape = CreateResultTileValueShape(shape);
 
-            // 逐点映射并原子恢复：Restore 会返回最终值，因此要收集 values。
-            foreach (Vector2I globalPosition in shape.GetGlobalCoordinateIterator())
+            // 逐点映射并原子恢复：未命中项保留 0，命中项记录恢复后的最终值。
+            foreach ((Vector2I globalPosition, int valueIndex) in resultShape.GetGlobalValueIndexIterator())
             {
                 if (!TryResolveChunkDataAndTileIndex(
                         globalPosition,
-                        chunkSlice,
+                        readStrategy,
                         chunkSize,
                         out ChunkData chunkData,
                         out int tileIndex))
@@ -149,27 +142,25 @@ namespace WorldWeaver.MapSystem.ChunkSystem
                     continue;
                 }
 
-                int finalTileRunId = chunkData.RestoreTileSingleUnchecked(tileIndex);
-                globalPositions.Add(globalPosition);
-                tileRunIds.Add(finalTileRunId);
+                resultShape.TileRunIds[valueIndex] = chunkData.RestoreTileSingleUnchecked(tileIndex);
             }
 
-            return TileValueShape.CreateValued(globalPositions, tileRunIds);
+            return resultShape;
         }
 
         /// <summary>
         /// 按 shape 彻底删除。
         /// </summary>
-        internal static TileValueShape DeleteTiles(PixelShape shape, IShapeChunkSlice chunkSlice, MapElementSize chunkSize)
+        internal static TileValuesArrayShape DeleteTiles(PixelShape shape, IShapeChunkReadStrategy readStrategy, MapElementSize chunkSize)
         {
-            List<Vector2I> globalPositions = [];
+            TileValuesArrayShape resultShape = CreateResultTileValueShape(shape);
 
-            // 逐点映射并原子删除：Delete 不携带 values。
-            foreach (Vector2I globalPosition in shape.GetGlobalCoordinateIterator())
+            // 逐点映射并原子删除：未命中项保留 0，命中项记录删除后的最终值。
+            foreach ((Vector2I globalPosition, int valueIndex) in resultShape.GetGlobalValueIndexIterator())
             {
                 if (!TryResolveChunkDataAndTileIndex(
                         globalPosition,
-                        chunkSlice,
+                        readStrategy,
                         chunkSize,
                         out ChunkData chunkData,
                         out int tileIndex))
@@ -177,17 +168,25 @@ namespace WorldWeaver.MapSystem.ChunkSystem
                     continue;
                 }
 
-                chunkData.DeleteTileSingleUnchecked(tileIndex);
-                globalPositions.Add(globalPosition);
+                resultShape.TileRunIds[valueIndex] = chunkData.DeleteTileSingleUnchecked(tileIndex);
             }
 
-            return TileValueShape.CreateCoordinateOnly(globalPositions);
+            return resultShape;
         }
 
 
         // ================================================================================
         //                                  内部工具
         // ================================================================================
+
+        /// <summary>
+        /// 根据输入 shape 创建同点序的结果 TileValueShape。
+        /// <para>结果数组默认以 0 填充，表示未命中或禁用渲染。</para>
+        /// </summary>
+        private static TileValuesArrayShape CreateResultTileValueShape(PixelShape shape)
+        {
+            return new TileValuesArrayShape(shape, new int[shape.PointCount]);
+        }
 
         /// <summary>
         /// 将单个全局点映射到“二维切片 range 中的 ChunkData + Tile 一维索引”。
@@ -199,7 +198,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         /// </summary>
         private static bool TryResolveChunkDataAndTileIndex(
             Vector2I globalPosition,
-            IShapeChunkSlice chunkSlice,
+            IShapeChunkReadStrategy readStrategy,
             MapElementSize chunkSize,
             out ChunkData chunkData,
             out int tileIndex)
@@ -211,7 +210,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
                 out ChunkPosition parentChunkPosition);
 
             // 步骤 2：通过接口按父级区块坐标获取 ChunkData（无数据则返回 null）。
-            chunkData = chunkSlice.GetChunkData(parentChunkPosition);
+            chunkData = readStrategy.GetChunkData(parentChunkPosition);
             if (chunkData == null)
             {
                 tileIndex = -1;

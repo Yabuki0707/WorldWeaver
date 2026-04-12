@@ -69,7 +69,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         ********************************/
 
         /// <summary>稳定节点集合</summary>
-        public static readonly ChunkStateNode[] StableNodes = 
+        public static readonly ChunkStateNode[] STABLE_NODES = 
         [
             ChunkStateNode.Enter,
             ChunkStateNode.NotInMemory,
@@ -79,7 +79,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         ];
 
         /// <summary>状态节点信息数组</summary>
-        private static readonly ChunkStateNodeInfo[] _stateNodesInfo = 
+        private static readonly ChunkStateNodeInfo[] _STATE_NODES_INFO = 
         [
             // 0: Exit
             new ChunkStateNodeInfo
@@ -217,12 +217,12 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         /// <summary>
         /// 节点枚举数量
         /// </summary>
-        private static readonly int _nodeCount = Enum.GetValues(typeof(ChunkStateNode)).Length;
+        private static readonly int _NODE_COUNT = Enum.GetValues(typeof(ChunkStateNode)).Length;
 
         /// <summary>
         /// 路径索引数组大小
         /// </summary>
-        private static readonly int _pathLookupSize = _nodeCount * _nodeCount;
+        private static readonly int _PATH_LOOKUP_SIZE = _NODE_COUNT * _NODE_COUNT;
 
         /// <summary>
         /// 获取路径索引
@@ -233,7 +233,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static int GetPathIndex(ChunkStateNode from, ChunkStateNode to)
         {
-            return (int)from * _nodeCount + (int)to;
+            return (int)from * _NODE_COUNT + (int)to;
         }
 
         /// <summary>
@@ -246,12 +246,12 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static (ChunkStateNode from, ChunkStateNode to) GetPathNodesFromIndex(int index, bool isValidateIndex = true)
         {
-            if (isValidateIndex && (index < 0 || index >= _pathLookupSize))
+            if (isValidateIndex && (index < 0 || index >= _PATH_LOOKUP_SIZE))
             {
-                throw new ArgumentOutOfRangeException(nameof(index), $"索引 {index} 超出有效范围 [0, {_pathLookupSize})");
+                throw new ArgumentOutOfRangeException(nameof(index), $"索引 {index} 超出有效范围 [0, {_PATH_LOOKUP_SIZE})");
             }
-            ChunkStateNode from = (ChunkStateNode)(index / _nodeCount);
-            ChunkStateNode to = (ChunkStateNode)(index % _nodeCount);
+            ChunkStateNode from = (ChunkStateNode)(index / _NODE_COUNT);
+            ChunkStateNode to = (ChunkStateNode)(index % _NODE_COUNT);
             return (from, to);
         }
 
@@ -262,7 +262,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         /// <para>第二维索引: 节点枚举值</para>
         /// <para>Value: 距离终点的步数，非稳定节点使用 int.MinValue 表示</para>
         /// </summary>
-        private static readonly int[][] _stablePathLookup = new int[_pathLookupSize][];
+        private static readonly int[][] _STABLE_PATH_LOOKUP = new int[_PATH_LOOKUP_SIZE][];
 
         /// <summary>
         /// 获取稳定路径表条目
@@ -274,7 +274,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         public static int[] GetStablePathLookup(ChunkStateNode from, ChunkStateNode to)
         {
             int index = GetPathIndex(from, to);
-            return _stablePathLookup[index];
+            return _STABLE_PATH_LOOKUP[index];
         }
 
 
@@ -284,7 +284,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         /// <para>第二维索引: 节点枚举值</para>
         /// <para>Value: true 表示该节点在路径上</para>
         /// </summary>
-        private static readonly bool[][] _detailedPathLookup = new bool[_pathLookupSize][];
+        private static readonly bool[][] _DETAILED_PATH_LOOKUP = new bool[_PATH_LOOKUP_SIZE][];
 
         /// <summary>
         /// 获取详细路径表条目
@@ -296,7 +296,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         public static bool[] GetDetailedPathLookup(ChunkStateNode from, ChunkStateNode to)
         {
             int index = GetPathIndex(from, to);
-            return _detailedPathLookup[index];
+            return _DETAILED_PATH_LOOKUP[index];
         }
 
 
@@ -304,7 +304,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         /// 稳定节点邻接图
         /// <para>索引为 ChunkStateNode 枚举值，值为该稳定节点的邻近稳定节点列表。</para>
         /// </summary>
-        private static readonly ChunkStateNode[][] _stableAdjacency = new ChunkStateNode[_nodeCount][];
+        private static readonly ChunkStateNode[][] _STABLE_ADJACENCY = new ChunkStateNode[_NODE_COUNT][];
 
         /// <summary>
         /// 获取指定稳定节点的邻近稳定节点列表
@@ -319,7 +319,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
             {
                 throw new ArgumentException($"节点 {stableNode} 不是稳定节点", nameof(stableNode));
             }
-            return _stableAdjacency[(int)stableNode];
+            return _STABLE_ADJACENCY[(int)stableNode];
         }
 
         /*******************************
@@ -353,8 +353,8 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
                 return;
             }
             
-            int detailedCount = _detailedPathLookup.Count(x => x != null);
-            int stableCount = _stablePathLookup.Count(x => x != null);
+            int detailedCount = _DETAILED_PATH_LOOKUP.Count(x => x != null);
+            int stableCount = _STABLE_PATH_LOOKUP.Count(x => x != null);
             GD.Print($"ChunkStateMachine: 路径初始化完成。详细规则: {detailedCount}, 稳定路由: {stableCount}");
         }
 
@@ -367,7 +367,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         private static bool InitializeDetailedPaths()
         {
             // 遍历所有稳定节点作为起始点
-            foreach (ChunkStateNode startStable in StableNodes)
+            foreach (ChunkStateNode startStable in STABLE_NODES)
             {
                 // 遍历计数，用于死循环熔断
                 int traversalCount = 0;
@@ -404,14 +404,14 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
                         {
                             int pathIndex = GetPathIndex(startStable, neighbor);
                             // 若该路径条目尚未初始化，则初始化 bool 数组
-                            _detailedPathLookup[pathIndex] ??= new bool[_nodeCount];
+                            _DETAILED_PATH_LOOKUP[pathIndex] ??= new bool[_NODE_COUNT];
                             // 标记当前路径上的所有普通节点
                             foreach (ChunkStateNode node in pathStack)
                             {
-                                _detailedPathLookup[pathIndex][(int)node] = true;
+                                _DETAILED_PATH_LOOKUP[pathIndex][(int)node] = true;
                             }
                             // 标记遇到的稳定节点
-                            _detailedPathLookup[pathIndex][(int)neighbor] = true;
+                            _DETAILED_PATH_LOOKUP[pathIndex][(int)neighbor] = true;
                         }
                         // 普通节点：继续深入
                         else
@@ -451,10 +451,10 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
             // *构建稳定节点邻接图*
             
             // 构建邻接关系：遍历所有稳定节点对
-            foreach (ChunkStateNode from in StableNodes)
+            foreach (ChunkStateNode from in STABLE_NODES)
             {
                 List<ChunkStateNode> adjacencyList = [];
-                foreach (ChunkStateNode to in StableNodes)
+                foreach (ChunkStateNode to in STABLE_NODES)
                 {
                     if (from == to) continue;
                     if (GetDetailedPathLookup(from, to) != null)
@@ -462,11 +462,11 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
                         adjacencyList.Add(to);
                     }
                 }
-                _stableAdjacency[(int)from] = adjacencyList.ToArray();
+                _STABLE_ADJACENCY[(int)from] = adjacencyList.ToArray();
             }
 
             // *遍历稳定节点，计算到其他稳定节点的距离*
-            foreach (ChunkStateNode startStable in StableNodes)
+            foreach (ChunkStateNode startStable in STABLE_NODES)
             {
                 // 遍历计数，防止死循环
                 int traversalCount = 0;
@@ -488,7 +488,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
                     int currentNeighborIndex = neighborIndexStack[stackTopIndex];
 
                     // 获取邻居列表
-                    ChunkStateNode[] neighbors = _stableAdjacency[(int)currentNode];
+                    ChunkStateNode[] neighbors = _STABLE_ADJACENCY[(int)currentNode];
 
                     // 若还有未处理的邻居
                     if (currentNeighborIndex < neighbors.Length)
@@ -506,13 +506,13 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
                         // 记录路径距离：Start -> ... -> Neighbor
                         int pathIndex = GetPathIndex(startStable, neighbor);
                         // 若该路径条目尚未初始化，则初始化 int 数组
-                        if (_stablePathLookup[pathIndex] == null)
+                        if (_STABLE_PATH_LOOKUP[pathIndex] == null)
                         {
-                            _stablePathLookup[pathIndex] = new int[_nodeCount];
+                            _STABLE_PATH_LOOKUP[pathIndex] = new int[_NODE_COUNT];
                             // 初始化所有值为 int.MinValue（表示不在路径上）
-                            for (int nodeIndex = 0; nodeIndex < _nodeCount; nodeIndex++)
+                            for (int nodeIndex = 0; nodeIndex < _NODE_COUNT; nodeIndex++)
                             {
-                                _stablePathLookup[pathIndex][nodeIndex] = int.MinValue;
+                                _STABLE_PATH_LOOKUP[pathIndex][nodeIndex] = int.MinValue;
                             }
                         }
                         // 记录路径中各节点到目标 neighbor 的距离
@@ -523,10 +523,10 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
                             int distToTarget = pathStack.Count - 1 - nodeIndex;
                             
                             // 记录最短距离
-                            int existingDist = _stablePathLookup[pathIndex][(int)nodeOnPath];
+                            int existingDist = _STABLE_PATH_LOOKUP[pathIndex][(int)nodeOnPath];
                             if (existingDist == int.MinValue || distToTarget < existingDist)
                             {
-                                _stablePathLookup[pathIndex][(int)nodeOnPath] = distToTarget;
+                                _STABLE_PATH_LOOKUP[pathIndex][(int)nodeOnPath] = distToTarget;
                             }
                         }
                         // 继续深入
@@ -564,7 +564,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static ChunkStateNode[] GetValidTransitions(ChunkStateNode node)
         {
-            return _stateNodesInfo[(int)node].ValidTransitions;
+            return _STATE_NODES_INFO[(int)node].ValidTransitions;
         }
 
         /// <summary>
@@ -575,7 +575,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static StateHandler GetHandler(ChunkStateNode node)
         {
-            return _stateNodesInfo[(int)node].Handler;
+            return _STATE_NODES_INFO[(int)node].Handler;
         }
 
         /// <summary>
@@ -586,7 +586,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static int GetPriority(ChunkStateNode node)
         {
-            return _stateNodesInfo[(int)node].Priority;
+            return _STATE_NODES_INFO[(int)node].Priority;
         }
 
         /// <summary>
@@ -597,7 +597,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool IsStable(ChunkStateNode node)
         {
-            return _stateNodesInfo[(int)node].IsStable;
+            return _STATE_NODES_INFO[(int)node].IsStable;
         }
 
 
@@ -609,7 +609,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool IsNodeGlobalDisabled(ChunkStateNode node)
         {
-            return _stateNodesInfo[(int)node].Priority < 0;  
+            return _STATE_NODES_INFO[(int)node].Priority < 0;  
         }
 
         /// <summary>
@@ -625,7 +625,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         public static void DisableNodeGlobal(ChunkStateNode node)
         {
             int index = (int)node;
-            ChunkStateNodeInfo info = _stateNodesInfo[index];
+            ChunkStateNodeInfo info = _STATE_NODES_INFO[index];
             if (info.Priority == 0)
             {
                 info.Priority = int.MinValue;
@@ -648,14 +648,14 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         public static bool RestoreNodePriority(ChunkStateNode node)
         {
             int index = (int)node;
-            if (_stateNodesInfo[index].Priority < 0)
+            if (_STATE_NODES_INFO[index].Priority < 0)
             {
-                if (_stateNodesInfo[index].Priority == int.MinValue)
+                if (_STATE_NODES_INFO[index].Priority == int.MinValue)
                 {
-                    _stateNodesInfo[index].Priority = 0;
+                    _STATE_NODES_INFO[index].Priority = 0;
                     return true;
                 }
-                _stateNodesInfo[index].Priority = Math.Abs(_stateNodesInfo[index].Priority);
+                _STATE_NODES_INFO[index].Priority = Math.Abs(_STATE_NODES_INFO[index].Priority);
                 return true;
             }
 

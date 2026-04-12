@@ -8,20 +8,20 @@ namespace WorldWeaver.MapSystem.TileSystem
 {
     /// <summary>
     /// Tile 值形状。
-    /// <para>继承自 <see cref="PixelValueShape{T}"/>，表达“全局坐标形状 + 按点序对齐的 TileRunId 数组”。</para>
+    /// <para>继承自 <see cref="PixelValuesArrayShape{T}"/>，表达“全局坐标形状 + 按点序对齐的 TileRunId 数组”。</para>
     /// <para>当该对象用于承载删除或逻辑移除结果时，<see cref="TileRunIds"/> 允许为 <see langword="null"/>，表示只返回变化点，不返回值数组。</para>
     /// </summary>
-    public sealed class TileValueShape : PixelValueShape<int>
+    public sealed class TileValuesArrayShape : PixelValuesArrayShape<int>
     {
         /// <summary>
         /// 空的“带值”TileValueShape（空坐标 + 空值数组）。
         /// </summary>
-        public static readonly TileValueShape EMPTY_VALUED = new(new PointListShape(), Array.Empty<int>());
+        public static readonly TileValuesArrayShape EMPTY_VALUED = new(new PointListShape(), Array.Empty<int>());
 
         /// <summary>
         /// 空的“仅坐标”TileValueShape（空坐标 + null 值数组）。
         /// </summary>
-        public static readonly TileValueShape EMPTY_COORDINATE_ONLY = new(new PointListShape());
+        public static readonly TileValuesArrayShape EMPTY_COORDINATE_ONLY = new(new PointListShape());
 
         /// <summary>
         /// 与点序严格对齐的 TileRunId 数组。
@@ -32,12 +32,12 @@ namespace WorldWeaver.MapSystem.TileSystem
         /// <summary>
         /// 当前对象是否携带 TileRunId 数组。
         /// </summary>
-        public bool HasTileRunIds => HasValues;
+        public bool HasTileRunIds => HasValues();
 
         /// <summary>
         /// 使用全局坐标列表与对应值列表构造一个带值的 TileValueShape。
         /// </summary>
-        public static TileValueShape CreateValued(List<Vector2I> globalPositions, List<int> tileRunIds)
+        public static TileValuesArrayShape CreateValued(List<Vector2I> globalPositions, List<int> tileRunIds)
         {
             if (globalPositions == null)
             {
@@ -54,13 +54,13 @@ namespace WorldWeaver.MapSystem.TileSystem
                 return EMPTY_VALUED;
             }
 
-            return new TileValueShape(new PointListShape(globalPositions), tileRunIds.ToArray());
+            return new TileValuesArrayShape(new PointListShape(globalPositions), tileRunIds.ToArray());
         }
 
         /// <summary>
         /// 使用全局坐标列表构造一个仅坐标的 TileValueShape。
         /// </summary>
-        public static TileValueShape CreateCoordinateOnly(List<Vector2I> globalPositions)
+        public static TileValuesArrayShape CreateCoordinateOnly(List<Vector2I> globalPositions)
         {
             if (globalPositions == null)
             {
@@ -72,22 +72,22 @@ namespace WorldWeaver.MapSystem.TileSystem
                 return EMPTY_COORDINATE_ONLY;
             }
 
-            return new TileValueShape(new PointListShape(globalPositions));
+            return new TileValuesArrayShape(new PointListShape(globalPositions));
         }
 
         /// <summary>
         /// 创建一个 Tile 值形状。
         /// </summary>
-        public TileValueShape(PixelShape shape, int[] tileRunIds = null) : base(shape, tileRunIds)
+        public TileValuesArrayShape(PixelShape shape, int[] tileRunIds = null) : base(shape, tileRunIds)
         {
         }
 
         /// <summary>
         /// 使用现有的像素值形状创建 Tile 值形状。
         /// </summary>
-        public TileValueShape(PixelValueShape<int> source) : base(
-            source?.Shape ?? throw new System.ArgumentNullException(nameof(source)),
-            source.Values)
+        public TileValuesArrayShape(IPixelValuesShape<int> source) : base(
+            source?.Shape ?? throw new ArgumentNullException(nameof(source)),
+            CreateTileRunIdArray(source))
         {
         }
 
@@ -98,6 +98,40 @@ namespace WorldWeaver.MapSystem.TileSystem
         public new IEnumerable<(Vector2I GlobalPosition, int TileRunId)> GetGlobalValueIterator()
         {
             return base.GetGlobalValueIterator();
+        }
+
+        /// <summary>
+        /// 获取全局坐标与 TileRunId 索引的配对迭代器。
+        /// </summary>
+        public new IEnumerable<(Vector2I GPosition, int ValueIndex)> GetGlobalValueIndexIterator()
+        {
+            return base.GetGlobalValueIndexIterator();
+        }
+
+        /// <summary>
+        /// 将任意像素值形状中的值复制为 TileRunId 数组。
+        /// </summary>
+        private static int[] CreateTileRunIdArray(IPixelValuesShape<int> source)
+        {
+            if (!source.HasValues())
+            {
+                return null;
+            }
+
+            if (!source.IsAligned())
+            {
+                throw new ArgumentException("source 的点数量与值数量不一致。", nameof(source));
+            }
+
+            int[] tileRunIds = new int[source.ValueCount];
+            int valueIndex = 0;
+            foreach ((Vector2I _, int tileRunId) in source.GetGlobalValueIterator())
+            {
+                tileRunIds[valueIndex] = tileRunId;
+                valueIndex++;
+            }
+
+            return tileRunIds;
         }
     }
 }

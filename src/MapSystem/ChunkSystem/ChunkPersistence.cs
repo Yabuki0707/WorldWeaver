@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Godot;
 using Newtonsoft.Json;
 using System.Threading;
+using WorldWeaver.MapSystem.ChunkSystem.Data;
 using WorldWeaver.MapSystem.GridSystem;
 using WorldWeaver.MapSystem.LayerSystem;
 

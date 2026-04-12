@@ -1,211 +1,180 @@
-# Chunk 模块
+# ChunkSystem README（初稿）
 
-区块系统的核心模块，负责地图的分块管理、状态驱动与数据持久化。
+本稿聚焦你关心的主线：`ChunkManager` 的自主驱动、`update` 如何推进 `Chunk + ChunkState`、以及 `Handler` 执行结果如何反馈回 `State` 形成闭环。
 
-## 设计理念
+## 1. 系统定位
 
-### 为什么需要区块？
+`ChunkSystem` 是地图分块运行时核心，主要职责有三类：
 
-在无限地图场景中，地图范围没有边界，无法一次性加载所有数据。区块系统将地图划分为固定大小的网格单元，按需加载、卸载，实现无限地图的可行性与性能平衡。
+- 生命周期管理：创建/移除 Chunk。
+- 状态机驱动：按帧推进 Chunk 状态。
+- 数据与事件出口：统一对上层广播状态变化和 Tile 变化。
 
-### 核心架构
+核心关系：
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                         Layer                                │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │                    ChunkManager                        │  │
-│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐               │  │
-│  │  │ Chunk   │  │ Chunk   │  │ Chunk   │  ...          │  │
-│  │  │ ┌─────┐ │  │ ┌─────┐ │  │ ┌─────┐ │               │  │
-│  │  │ │State│ │  │ │State│ │  │ │State│ │               │  │
-│  │  │ └─────┘ │  │ └─────┘ │  │ └─────┘ │               │  │
-│  │  │ ┌─────┐ │  │ ┌─────┐ │  │ ┌─────┐ │               │  │
-│  │  │ │Data │ │  │ │Data │ │  │ │Data │ │               │  │
-│  │  │ └─────┘ │  │ └─────┘ │  │ └─────┘ │               │  │
-│  │  └─────────┘  └─────────┘  └─────────┘               │  │
-│  └───────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-```
+`MapLayer -> ChunkManager -> Chunk -> ChunkState / ChunkData`
 
-**层级关系**：`Layer` → `ChunkManager` → `Chunk` → `ChunkState` / `ChunkData`
+其中当前架构下，`ChunkManager` 是唯一驱动者，`Chunk` 与 `ChunkState` 都不直接执行业务副作用。
 
-每个 Layer 拥有一个 ChunkManager 实例，ChunkManager 管理该层所有区块的创建、移除与状态驱动。
+## 2. 关键角色职责
 
-### 状态机驱动
+### 2.1 ChunkManager（主驱动）
 
-区块的生命周期由状态机控制。每个 Chunk 实例内部持有一个 ChunkState 实例，负责状态推进与路径导航。
+- 维护 `_chunks`（全量索引）与 `_updatingChunks`（待驱动集合）。
+- 每帧调用 `Update()` 推进状态。
+- 统一执行 `StateHandler`。
+- 统一处理执行结果并触发事件：
+  - `ChunkStateUpdated`
+  - `ChunkStateStableReached`
+  - `ChunkCreated`
+  - `ChunkRemoved`
+  - `TilesChanged`
 
-**两级路径表**：
+### 2.2 Chunk（流程适配层）
 
-路径在类静态初始化时预计算完成，运行时仅需查表：
+- 持有身份与容器：`CPosition`、`Uid`、`Data`、`State`。
+- 对外暴露三件事：
+  - `GetStateUpdateHandler()`：给 Manager 本轮该执行哪个 Handler。
+  - `StateUpdate()`：在“Handler 成功后”提交状态迁移。
+  - `HandleStateExecutionFailure()`：在“Handler 失败后”执行状态收敛。
 
-- **宏观导航（稳定路径表）**：记录稳定节点之间的最短距离，用于选择下一个目标稳定节点
-- **微观导航（详细路径表）**：记录稳定节点到邻近稳定节点之间经过的所有节点，用于选择下一跳
+注意：`Chunk` 本身不执行 handler，只做流程桥接。
 
-**状态推进流程**：
+### 2.3 ChunkState（决策与收敛层）
 
-1. 外部设定终点稳定节点（`FinalStableNode`）
-2. 查宏观路径表，选择距离终点最近的邻近稳定节点作为中间目标
-3. 查微观路径表，选择下一跳节点
-4. 执行下一跳节点对应的 StateHandler
-5. 重复直至到达终点稳定节点
+- 维护状态字段：
+  - `CurrentNode`、`PreviousNode`
+  - `CurrentStableNode`
+  - `FinalStableNode`（最终目标稳定节点）
+  - `TargetStableNode`（中间稳定目标）
+  - `TargetNode`（下一跳节点）
+- 负责路径决策（宏观稳定路径 + 微观详细路径）。
+- 负责失败收敛（阻塞/回退/重试策略）。
 
-这种设计实现了**状态逻辑与执行逻辑的解耦**：
+### 2.4 StateHandler（执行层）
 
-- 状态机只关心"如何到达目标状态"（路径查表 + 状态推进）
-- StateHandler 只关心"到达该状态后做什么"（业务逻辑执行）
+- 只做状态副作用执行，返回 `StateExecutionResult`：
+  - `Success`
+  - `RetryLater`
+  - `PermanentFailure`
+- 不直接改 `ChunkState`，状态写回由 Manager 驱动回流。
 
-### 目标驱动模式
+## 3. 状态节点与路径机制
 
-区块不会主动决定自己的状态，而是由外部（如 Entity）设定目标状态。状态机根据目标状态自动规划路径并推进。这种模式使得区块系统成为被动的服务提供者，由上层业务决定何时加载、卸载。
+状态节点由 `ChunkStateNode` 定义，稳定节点为：
 
-## 模块说明
+- `Enter`
+- `NotInMemory`
+- `LoadedInMemory`
+- `LoadedInGame`
+- `Exit`
 
-### Chunk（区块实体）
+路径分两级：
 
-区块的运行时实体，聚合了状态机与数据容器。
+- 宏观稳定路径：`GetStablePathLookup(fromStable, toStable)`，用于选下一段稳定目标。
+- 微观详细路径：`GetDetailedPathLookup(currentStable, targetStable)`，用于在当前节点选下一跳。
 
-**核心属性**：
+`ChunkState.SelectTargetNode()` 的核心是：
 
-- `CPosition`：区块坐标
-- `State`：状态机实例
-- `Data`：Tile 数据容器
-- `Uid`：唯一标识符（WorldId + LayerId + Position）
+1. 若到达当前中间稳定目标，则先重算下一段稳定目标。
+2. 在 `CurrentNode` 的可转移邻接中，筛选“在微观路径上且未被阻塞且未被全局禁用”的节点。
+3. 按优先级选出下一跳，写入 `TargetNode`。
 
-**空对象模式**：使用 `Chunk.Empty` 表示空区块，避免空引用检查。
+## 4. 主流程（Manager 驱动）
 
-### ChunkManager（区块管理器）
+每帧 `ChunkManager.Update()` 对每个活跃 Chunk 做如下流程：
 
-负责区块的生命周期管理与统一驱动。
+1. 询问需求：`chunk.GetStateUpdateHandler()`  
+   - 若 `TargetNode` 为空，内部先触发 `State.SelectTargetNode()`。
+   - 若仍无目标，说明本轮无需推进，直接跳过。
+2. 执行副作用：`handler.Execute(manager, chunk)`。
+3. 按执行结果分支：
+   - `Success`：调用 `chunk.StateUpdate()`，提交状态迁移。
+   - `RetryLater` / `PermanentFailure`：调用 `chunk.HandleStateExecutionFailure(...)`。
+4. 成功推进后统一发事件；若新节点是 `Exit`，延迟到循环后移除 Chunk。
 
-**核心职责**：
+## 5. 你强调的“结果回流到 State”闭环
 
-- 区块的创建与移除
-- 维护活跃区块索引（使用 `long Key` 避免哈希冲突）
-- 每帧调用 `Update()` 驱动所有区块状态机
+闭环不是“handler 直接改 state”，而是四段式回流：
 
-**事件**：
+1. `State` 决策下一跳（`TargetNode`）。
+2. `Manager` 执行该跳对应 `Handler`。
+3. `Manager` 把执行结果回灌给 `ChunkState`：
+   - 成功：`UpdateToTargetNode()`
+   - 失败：`HandleExecutionFailure()`
+4. `ChunkState` 产出 `ChunkStateUpdateResult`（成功分支）回传给 `Manager`，由 Manager 广播事件，外部据此再调整目标状态，进入下一帧循环。
 
-- `ChunkCreated`：区块创建时触发
-- `ChunkRemoved`：区块移除时触发
-- `TilesChanged`：Tile 数据变化时触发，统一使用 `TileValueShape` 承载变化结果
-- `ChunkStateStableReached`：区块到达稳定状态时触发
+这就是完整反馈回路：
 
-### ChunkState（状态机引擎）
+`State决策 -> Handler执行 -> State收敛/迁移 -> Manager事件输出 -> 外部调整目标 -> 下一轮State决策`
 
-状态机的核心引擎，负责路径导航与状态推进。
+## 6. 失败与重试策略（反馈环关键）
 
-**状态节点**：
+### 6.1 Success
 
-| 节点                         | 类型  | 说明        |
-|----------------------------|-----|-----------|
-| Exit                       | 终态  | 已移除出状态机   |
-| Enter                      | 起始态 | 刚进入状态机    |
-| NotInMemory                | 稳定态 | 未加载到内存    |
-| LoadingInMemory            | 过渡态 | 正在加载到内存   |
-| ReadingInformation         | 过渡态 | 同步读取元数据   |
-| ReadingInformationInThread | 过渡态 | 异步读取元数据   |
-| LoadedInMemory             | 稳定态 | 已加载到内存    |
-| DeletingFromMemory         | 过渡态 | 正在从内存卸载   |
-| SavingInformation          | 过渡态 | 同步保存元数据   |
-| SavingInformationInThread  | 过渡态 | 异步保存元数据   |
-| LoadingInGame              | 过渡态 | 正在加载到游戏场景 |
-| DeletingFromGame           | 过渡态 | 正在从游戏场景卸载 |
-| LoadedInGame               | 稳定态 | 已加载到游戏场景  |
+- `ChunkState.UpdateToTargetNode()` 提交 `CurrentNode = TargetNode`。
+- 清空 `TargetNode` 与阻塞表。
+- 若落入稳定节点，更新 `CurrentStableNode` 并返回稳定节点变化信息。
 
-**稳定态**：区块在该状态下暂停，等待新的目标状态。路径规划以稳定节点为基本单位。
+### 6.2 RetryLater
 
-**阻塞机制**：当 StateHandler 返回 `null`（永久失败）时，该节点被加入阻塞表，状态机回退并尝试其他路径。若所有路径均被阻塞，则清空阻塞表重新尝试。
+- `ChunkState` 保持当前状态不变。
+- 目标可在后续帧继续尝试（适合异步未就绪场景）。
 
-### ChunkData（数据容器）
+### 6.3 PermanentFailure
 
-Tile 数据的存储容器，按行优先顺序存储。
+- 若有 `PreviousNode` 且不同于当前节点：回退到 `PreviousNode`。
+- 阻塞失败节点，避免立刻再次选中。
+- 清空 `TargetNode`，下帧重新选路。
 
-**数据结构**：
+若由于局部阻塞导致“无路可走”，状态机会清空阻塞表并重试，避免死锁。
 
-- `Tiles`：Tile 类型 ID 数组，索引 = `y * width + x`
-- 支持设置、移除（ID 转负数表示可恢复）、恢复操作
+## 7. 当前实现状态（非常重要）
 
-### ChunkPosition（区块坐标）
+现阶段多个具体 `Handler` 仍是占位实现（直接返回 `Success`），例如：
 
-表示区块在世界中的网格坐标，提供多种坐标转换方案。
+- `LoadingInMemoryHandler`
+- `ReadingInformationHandler`
+- `SavingInformationHandler`
+- `LoadingInGameHandler`
+- `DeletingFromMemoryHandler`
+- `DeletingFromGameHandler`
 
-**坐标转换**：
+这意味着主流程和反馈闭环已经搭好，但具体 IO/资源加载副作用仍待接入。
 
-| 转换方向            | 方法                              | 说明                               |
-|-----------------|---------------------------------|----------------------------------|
-| 区块坐标 → 字典键      | `ToKey()`                       | 转换为 `long` 类型，避免结构体哈希冲突          |
-| 字典键 → 区块坐标      | 构造函数 `ChunkPosition(long key)`  | 从键还原区块坐标                         |
-| 区块坐标 → Vector2I | `ToVector2I()`                  | 转换为 Godot 向量类型                   |
-| 全局坐标 → 区块坐标     | `FromGlobalTilePosition()`      | 支持整数/浮点坐标，推荐传入 ChunkManager 避免混淆 |
-| 区块坐标 → 全局起点     | `GetStartGlobalTilePosition()`  | 获取区块左上角的全局坐标                     |
-| 区块坐标 → 全局中心     | `GetCenterglobalTilePosition()` | 获取区块中心点的全局坐标                     |
-| 全局坐标 → 局部坐标     | `ToLocalTilePosition()`         | 可同时输出所属区块坐标                      |
-| 区块+局部 → 全局坐标    | `ToGlobalTilePosition()`        | 还原全局 Tile 坐标                     |
-| 局部坐标 → 数组索引     | `GetTileIndex()`                | 转换为一维数组索引                        |
+## 8. 外部使用建议
 
-**负坐标处理**：采用位运算实现高效的坐标分配，正确处理负数全局坐标的区块归属。
+1. 创建 Chunk：`ChunkManager.CreateChunk(...)`。
+2. 设置目标稳定状态：`chunk.FinalStateNode = xxx`。
+3. 在游戏主循环持续调用：`ChunkManager.Update()`。
+4. 订阅状态事件以驱动上层逻辑（渲染、实体激活、调度策略等）。
 
-### ChunkPersistence（持久化器）
+## 9. 扩展实现建议
 
-负责区块数据的读写，提供两种方案：
+### 9.1 新增状态节点
 
-**阻塞方案**：
+1. 在 `ChunkStateNode` 增加节点。
+2. 在 `ChunkStateMachine` 的 `_stateNodesInfo` 配置：
+   - `ValidTransitions`
+   - `Priority`
+   - `IsStable`
+   - `Handler`
+3. 验证路径表初始化是否符合预期。
 
-- 带冷却限制（700ms），防止频繁操作
-- 适用于必须立即完成的场景
+### 9.2 新增或替换 Handler
 
-**非阻塞方案**：
+1. 继承 `StateHandler` 并实现 `Execute(ChunkManager, Chunk)`。
+2. 返回值必须准确区分：
+   - 可推进：`Success`
+   - 暂不可推进：`RetryLater`
+   - 路径应回避：`PermanentFailure`
+3. 尽量保证副作用幂等，避免重试造成重复写入。
 
-- 带结果缓存（20秒过期）
-- 并发限制（最大12个任务）
-- 适用于批量加载场景
+## 10. 参考文件
 
-### StateHandler（状态处理器）
-
-状态转换的执行单元，实现业务逻辑与状态元数据的解耦。
-
-**返回值含义**：
-
-- `true`：执行成功，状态转换继续
-- `false`：临时失败，下一帧重试
-- `null`：永久失败，阻塞当前节点
-
-详细说明见 [Handlers/README.md](State/Handlers/README.md)
-
-## 使用说明
-
-### 创建区块
-
-通过 ChunkManager 创建区块，区块创建后自动进入状态机。
-
-### 设定目标状态
-
-外部通过设定 `FinalStateNode` 属性指定区块的最终目标状态。状态机将自动规划路径并逐步推进。
-
-### 驱动更新
-
-ChunkManager 的 `Update()` 方法应在每帧调用，驱动所有活跃区块的状态机推进。状态机根据路径表自动选择下一跳并执行对应的
-Handler。
-
-### 监听事件
-
-ChunkManager 提供区块创建、移除、Tile 变化、状态稳定等事件，外部可订阅这些事件以响应区块状态变化。
-
-### 访问 Tile 数据
-
-通过 Chunk 的 `Data` 属性访问 Tile 数据容器，进行 Tile 的读取与修改。
-
-## 扩展指南
-
-### 添加新状态节点
-
-1. 在 `ChunkStateNode` 枚举中添加新节点
-2. 在 `ChunkState.StateNodeInfo` 数组中配置元数据（ValidTransitions、Priority、IsStable、Handler）
-3. 若需要执行逻辑，创建对应的 StateHandler 类并赋值给 Handler 属性
-4. 路径表会在静态初始化时自动重新计算
-
-### 自定义持久化逻辑
-
-`ChunkPersistence` 为静态类，可通过修改其内部方法实现自定义存储格式或存储位置。
+- `ChunkManager`：`src/MapSystem/ChunkSystem/ChunkManager.cs`
+- `Chunk`：`src/MapSystem/ChunkSystem/Chunk.cs`
+- `ChunkState`：`src/MapSystem/ChunkSystem/State/ChunkState.cs`
+- `ChunkStateMachine`：`src/MapSystem/ChunkSystem/State/ChunkStateMachine.cs`
+- `StateHandler`：`src/MapSystem/ChunkSystem/Handler/StateHandler.cs`
+- Handler 说明：`src/MapSystem/ChunkSystem/Handler/README.md`
