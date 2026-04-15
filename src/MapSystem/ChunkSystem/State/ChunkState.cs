@@ -7,8 +7,8 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
 {
     /// <summary>
     /// 区块状态对象。
-    /// <para>该类只负责维护状态节点、阻塞信息与目标选择规则，不再直接执行 handler。</para>
-    /// <para>状态推进的副作用由 ChunkManager 驱动 handler 完成；执行成功后，再由 Chunk 调用本类完成节点迁移。</para>
+    /// <para>该类只负责维护状态节点、阻塞信息，并基于状态机查表结果回答“下一跳目标节点是谁”，不再直接执行 handler。</para>
+    /// <para>状态推进的副作用由 ChunkManager 驱动 handler 完成；执行成功后，再由 ChunkManager 调用本类完成节点迁移。</para>
     /// </summary>
     public sealed class ChunkState : IDisposable
     {
@@ -32,19 +32,14 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         public ChunkStateNode CurrentStableNode { get; private set; } = ChunkStateNode.Enter;
 
         /// <summary>
-        /// 中间目标稳定节点。
-        /// <para>表示当前稳定节点在通往最终目标稳定节点过程中，下一步应先到达哪个稳定节点。</para>
-        /// </summary>
-        public ChunkStateNode TargetStableNode { get; private set; } = ChunkStateNode.NotInMemory;
-
-        /// <summary>
         /// 最终目标稳定节点。
+        /// <para>该字段只表达区块最终希望到达的稳定态，不承担路径规划职责。</para>
         /// </summary>
         public ChunkStateNode FinalStableNode { get; private set; } = ChunkStateNode.NotInMemory;
 
         /// <summary>
         /// 目标节点（下一步要切换到哪个节点）。
-        /// <para>该字段是缓存字段：仅当其为 null 时才会重新计算；成功推进状态后才会被清空。</para>
+        /// <para>该字段只保存最近一次选路结果，是否复用由调用方自行决定。</para>
         /// </summary>
         public ChunkStateNode? TargetNode { get; private set; }
 
@@ -90,13 +85,14 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
 
 
         /*******************************
-                  目标设置与路径规划
+                  目标设置
         ********************************/
 
         /// <summary>
-        /// 设置最终目标稳定节点，并重新规划中间稳定目标。
+        /// 设置最终目标稳定节点。
+        /// <para>该方法只负责写入最终终点，并使当前目标节点失效。</para>
         /// </summary>
-        public bool SetFinalTarget(ChunkStateNode finalNode)
+        public bool SetFinalStableNode(ChunkStateNode finalNode)
         {
             // 终点必须是稳定节点，否则无法参与稳定路径规划。
             if (!ChunkStateMachine.IsStable(finalNode))
@@ -105,70 +101,9 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
                 return false;
             }
 
-            // 更新最终目标后，主动失效当前目标节点缓存，强制下次重新选路。
             FinalStableNode = finalNode;
             TargetNode = null;
-
-            // 重新计算从当前稳定节点到最终稳定节点的下一段稳定目标。
-            return RecalculateTargetStable();
-        }
-
-        /// <summary>
-        /// 重新计算中间目标稳定节点。
-        /// <para>该方法只做“宏观导航”：决定当前稳定节点通往最终稳定节点时，下一个应抵达的稳定节点。</para>
-        /// </summary>
-        private bool RecalculateTargetStable()
-        {
-            // 已经在最终稳定节点时，当前稳定节点就是下一段目标。
-            if (CurrentStableNode == FinalStableNode)
-            {
-                TargetStableNode = CurrentStableNode;
-                return true;
-            }
-
-            // 从稳定路径查表中读取“各候选稳定节点到终点的距离”。
-            int[] pathDistances = ChunkStateMachine.GetStablePathLookup(CurrentStableNode, FinalStableNode);
-            if (pathDistances != null)
-            {
-                // 默认保持原地，只有找到更优候选才替换。
-                ChunkStateNode bestCandidate = CurrentStableNode;
-                bool isFound = false;
-                int minDistance = int.MaxValue;
-
-                foreach (ChunkStateNode candidate in ChunkStateMachine.GetStableAdjacency(CurrentStableNode))
-                {
-                    // int.MinValue 代表该候选不在可达路径上，直接跳过。
-                    int candidateDistance = pathDistances[(int)candidate];
-                    if (candidateDistance == int.MinValue)
-                    {
-                        continue;
-                    }
-
-                    // 选择到终点距离更短的稳定邻居作为下一段目标。
-                    if (candidateDistance < minDistance)
-                    {
-                        minDistance = candidateDistance;
-                        bestCandidate = candidate;
-                        isFound = true;
-                    }
-                }
-
-                if (isFound)
-                {
-                    // 找到可达且更优的稳定候选，更新中间稳定目标。
-                    TargetStableNode = bestCandidate;
-                    return true;
-                }
-            }
-
-            // 无路径或无候选时，回退为“保持当前稳定节点”。
-            if (TargetStableNode != CurrentStableNode)
-            {
-                TargetStableNode = CurrentStableNode;
-            }
-
-            // 返回 false 让上层知道：本轮稳定目标未真正推进。
-            return false;
+            return true;
         }
 
 
@@ -183,71 +118,55 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         /// </summary>
         public bool SelectTargetNode()
         {
-            // 目标节点已缓存则复用，避免重复计算。
-            if (TargetNode != null)
-            {
-                return true;
-            }
+            // 每次调用都按当前条件重新作答，先丢弃上一次的目标节点结果,否则失败分支会留下陈旧结果。
+            TargetNode = null;
 
-            // 当前节点已经位于中间目标稳定节点时，需要先重新规划下一段稳定路径。
-            if (CurrentNode == TargetStableNode)
-            {
-                if (CurrentStableNode != CurrentNode)
-                {
-                    // 当前节点已到稳定节点时，刷新“当前稳定节点”游标。
-                    CurrentStableNode = CurrentNode;
-                }
-
-                if (CurrentStableNode == FinalStableNode)
-                {
-                    // 到达终点稳定节点后，本轮无需再选下一跳。
-                    TargetStableNode = CurrentStableNode;
-                    return false;
-                }
-
-                // 尚未到终点稳定节点，先更新下一段稳定目标。
-                if (!RecalculateTargetStable())
-                {
-                    return false;
-                }
-            }
-
-            // 读取“当前稳定节点 -> 目标稳定节点”这一段的详细路径节点集合。
-            bool[] pathLookup = ChunkStateMachine.GetDetailedPathLookup(CurrentStableNode, TargetStableNode);
-            if (pathLookup == null)
+            // 读取“当前稳定锚点 -> 最终终点稳定节点”的节点距离表。
+            int[] nodeDistanceLookup =
+                ChunkStateMachine.GetStableRouteNodeDistanceLookup(CurrentStableNode, FinalStableNode);
+            if (nodeDistanceLookup == null)
             {
                 return false;
             }
-
-            // 在当前节点可导向的邻接节点里，选出优先级最高且可达的下一跳。
+            
+            // 邻居节点数组
             ChunkStateNode[] transitions = ChunkStateMachine.GetValidTransitions(CurrentNode);
-            int maxPriority = -1;
+            
+            // 当前在遍历中获取的最高权重
+            int maxWeightedScore = int.MinValue;
+            // 当前在遍历中获取的最高权重的节点的优先度
+            int maxPriority = int.MinValue;
             ChunkStateNode? bestTransitionNode = null;
-
+            
+            // 在当前节点可导向的邻接节点里，按统一权重评分选择下一跳。
+            // 评分越大越优；同分时仅使用优先度决胜。
             foreach (ChunkStateNode transitionNode in transitions)
             {
-                // 不在本段路径上的节点不参与竞争。
-                if (!pathLookup[(int)transitionNode])
-                {
-                    continue;
-                }
+                // 先读取候选邻接节点到最终稳定终点的距离。
+                int distanceToFinalStable = nodeDistanceLookup[(int)transitionNode];
+                
+                // int.MaxValue 表示该节点不在“当前稳定锚点 -> 最终稳定终点”的可达范围上，直接跳过。
+                if (distanceToFinalStable == int.MaxValue) continue;
 
                 // 被局部阻塞表拦截的节点不参与竞争。
-                if (IsBlocked(transitionNode))
-                {
-                    continue;
-                }
+                if (IsBlocked(transitionNode)) continue;
 
                 // 被全局禁用的节点不参与竞争。
-                if (ChunkStateMachine.IsNodeGlobalDisabled(transitionNode))
-                {
-                    continue;
-                }
-
-                // 选择优先级最高的可用节点。
+                if (ChunkStateMachine.IsNodeGlobalDisabled(transitionNode)) continue;
+                
+                //获取优先度
                 int priority = ChunkStateMachine.GetPriority(transitionNode);
-                if (priority > maxPriority)
+                // 统一权重评分：优先度越高权重越高，距离越近权重越高(计算语境下也就是距离越近,权重减的也就越少)。
+                // 默认语义下，1 点距离差异等价于 5 点优先度差异。
+                int weightedScore =
+                    priority - distanceToFinalStable * ChunkStateMachine.DistancePriorityWeightRatio;
+                
+                // 若当前节点权重最高或权重相同时优先度最高，则取缔作为下一跳
+                if (weightedScore > maxWeightedScore ||
+                    (weightedScore == maxWeightedScore && priority > maxPriority))
                 {
+                    // 一旦当前候选更优，就同步刷新综合评分与同分决胜优先级。
+                    maxWeightedScore = weightedScore;
                     maxPriority = priority;
                     bestTransitionNode = transitionNode;
                 }
@@ -324,7 +243,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
             ChunkStateNode? newStableNode = null;
             bool isNewNodeStable = ChunkStateMachine.IsStable(newNode);
 
-            // 提交节点推进：当前节点切换到目标节点，并清空目标缓存与阻塞表。
+            // 提交节点推进：当前节点切换到目标节点，并清空本轮目标结果与阻塞表。
             PreviousNode = previousNode;
             CurrentNode = newNode;
             TargetNode = null;

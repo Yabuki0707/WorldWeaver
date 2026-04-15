@@ -1,17 +1,28 @@
-using System;
-
-namespace WorldWeaver.MapSystem.ChunkSystem.State.Handler
+﻿namespace WorldWeaver.MapSystem.ChunkSystem.State.Handler
 {
     /// <summary>
-    /// 正在从内存删除状态处理器
-    /// <para>负责处理区块数据从内存中卸载的过程。</para>
-    /// <para>此状态为过渡态，执行内存清理和资源释放操作。</para>
+    /// 正在从内存删除状态处理器。
+    /// <para>负责在区块离开内存前释放当前持有的 <see cref="ChunkData"/>。</para>
+    /// <para>该阶段只处理内存层资源回收，不负责保存；保存逻辑应已在更前置的保存状态完成。</para>
     /// </summary>
     public sealed class DeletingFromMemoryHandler : StateHandler
     {
+        // ================================================================================
+        //                                  状态处理方法
+        // ================================================================================
+
+        /// <summary>
+        /// 执行内存释放逻辑。
+        /// </summary>
         public override StateExecutionResult Execute(ChunkManager manager, Chunk chunk)
         {
-            // 占位实现：当前版本暂未接入真实的内存卸载流程，先返回成功。
+            if (!HandlerExecutionUtility.ValidateContext(manager, chunk, nameof(DeletingFromMemoryHandler)))
+            {
+                return StateExecutionResult.PermanentFailure;
+            }
+
+            // 当前阶段只释放区块持有的内存数据，允许空数据直接通过。
+            chunk.ReleaseChunkData();
             return StateExecutionResult.Success;
         }
     }

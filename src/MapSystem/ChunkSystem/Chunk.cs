@@ -2,14 +2,13 @@ using System;
 using Godot;
 using WorldWeaver.MapSystem.ChunkSystem.Data;
 using WorldWeaver.MapSystem.ChunkSystem.State;
-using WorldWeaver.MapSystem.ChunkSystem.State.Handler;
 
 namespace WorldWeaver.MapSystem.ChunkSystem
 {
     /// <summary>
     /// 区块运行时实体。
     /// <para>该类只承载自身身份、数据与状态，不再保存上级管理器引用。</para>
-    /// <para>状态推进由 ChunkManager 驱动；Chunk 只负责暴露“当前是否需要执行状态处理器”以及“执行成功后如何推进状态”。</para>
+    /// <para>状态推进完全由 ChunkManager 直接驱动；Chunk 本体不再包装状态机流程。</para>
     /// </summary>
     public class Chunk : Object, IDisposable
     {
@@ -45,7 +44,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         public ChunkStateNode FinalStateNode
         {
             get => State?.FinalStableNode ?? ChunkStateNode.Exit;
-            set => State?.SetFinalTarget(value);
+            set => State?.SetFinalStableNode(value);
         }
 
         /// <summary>
@@ -84,7 +83,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
             State = new ChunkState();
 
             // 新建后默认目标为“驻留内存”稳定态，后续由 Manager 驱动推进。
-            State.SetFinalTarget(ChunkStateNode.NotInMemory);
+            State.SetFinalStableNode(ChunkStateNode.NotInMemory);
         }
 
         /// <summary>
@@ -175,69 +174,31 @@ namespace WorldWeaver.MapSystem.ChunkSystem
                 return false;
             }
 
+            // 若当前已经持有旧数据，先释放旧实例，避免遗留无主数据。
+            if (Data != null && !ReferenceEquals(Data, setData))
+            {
+                Data.Dispose();
+            }
+
             // 通过校验后再挂载数据。
             Data = setData;
             return true;
         }
 
-
-        /*******************************
-                  状态驱动辅助
-        ********************************/
-
         /// <summary>
-        /// 获取本轮状态更新所需执行的处理器。
-        /// <para>流程如下：</para>
-        /// <para>1. 若当前尚无 TargetNode，则先让 State 选择一个目标节点；</para>
-        /// <para>2. 若依旧没有目标节点，说明本轮无需推进，返回 null；</para>
-        /// <para>3. 若存在目标节点，则按“当前节点”选择处理器；若未配置处理器则在 Chunk 层保底替换为空处理器。</para>
-        /// <para>约定：返回 null 仅表示“本轮无更新需求”，不再用于表示“有需求但无需副作用”。</para>
+        /// 释放当前区块持有的内存数据。
         /// </summary>
-        public StateHandler GetStateUpdateHandler()
+        public void ReleaseChunkData()
         {
-            // 空 Chunk 或异常状态下直接返回“无需求”。
-            if (State == null)
+            if (Data == null)
             {
-                return null;
+                return;
             }
 
-            // 目标节点为空时，由 State 负责一次“下一跳”计算。
-            if (State.TargetNode == null && !State.SelectTargetNode())
-            {
-                return null;
-            }
-
-            // 计算后依旧为空，表示本轮没有可推进节点。
-            if (State.TargetNode == null)
-            {
-                return null;
-            }
-
-            // 处理器按“当前节点”获取；若节点未配置 handler，则在 Chunk 层兜底为空处理器。
-            StateHandler handler = ChunkStateMachine.GetHandler(State.CurrentNode);
-            return handler ?? EmptyStateHandler.INSTANCE;
+            // 先释放底层数据，再清空引用，表示该区块当前不再驻留内存数据。
+            Data.Dispose();
+            Data = null;
         }
-
-        /// <summary>
-        /// 在状态处理器执行成功后推进状态。
-        /// <para>该方法只处理“成功执行后如何迁移状态”，不负责执行 handler 本身。</para>
-        /// </summary>
-        public ChunkStateUpdateResult StateUpdate()
-        {
-            // 状态提交完全委托给 ChunkState，Chunk 仅做流程包装。
-            return State?.UpdateToTargetNode();
-        }
-
-        /// <summary>
-        /// 处理状态处理器执行失败后的状态收敛逻辑。
-        /// <para>当前仅在永久失败时执行回退/阻塞处理；RetryLater 保持现状等待下轮继续尝试。</para>
-        /// </summary>
-        public void HandleStateExecutionFailure(StateExecutionResult executionResult)
-        {
-            // 失败处理细则在 ChunkState 内集中维护，Chunk 不做二次判定。
-            State?.HandleExecutionFailure(executionResult);
-        }
-
 
         /*******************************
                   工具方法
