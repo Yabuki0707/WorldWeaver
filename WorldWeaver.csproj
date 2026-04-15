@@ -1,0 +1,64 @@
+<Project Sdk="Godot.NET.Sdk/4.6.1">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework Condition=" '$(GodotTargetPlatform)' == 'android' ">net9.0</TargetFramework>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="addons\godotsteam\androidarm64\libgodotsteam.android.template_debug.arm64.so" />
+    <Content Include="addons\godotsteam\androidarm64\libgodotsteam.android.template_release.arm64.so" />
+    <Content Include="addons\godotsteam\androidarm64\libsteam_api.so" />
+    <Content Include="addons\godotsteam\godotsteam.gdextension" />
+    <Content Include="addons\godotsteam\godotsteam.gdextension.uid" />
+    <Content Include="addons\godotsteam\license.md" />
+    <Content Include="addons\godotsteam\linux32\libgodotsteam.linux.template_debug.x86_32.so" />
+    <Content Include="addons\godotsteam\linux32\libgodotsteam.linux.template_release.x86_32.so" />
+    <Content Include="addons\godotsteam\linux32\libsteam_api.so" />
+    <Content Include="addons\godotsteam\linux64\libgodotsteam.linux.template_debug.x86_64.so" />
+    <Content Include="addons\godotsteam\linux64\libgodotsteam.linux.template_release.x86_64.so" />
+    <Content Include="addons\godotsteam\linux64\libsteam_api.so" />
+    <Content Include="addons\godotsteam\linuxarm64\libgodotsteam.linux.template_debug.arm64.so" />
+    <Content Include="addons\godotsteam\linuxarm64\libgodotsteam.linux.template_release.arm64.so" />
+    <Content Include="addons\godotsteam\linuxarm64\libsteam_api.so" />
+    <Content Include="addons\godotsteam\osx\libgodotsteam.macos.template_debug.dylib" />
+    <Content Include="addons\godotsteam\osx\libgodotsteam.macos.template_release.dylib" />
+    <Content Include="addons\godotsteam\osx\libsteam_api.dylib" />
+    <Content Include="addons\godotsteam\readme.md" />
+    <Content Include="addons\godotsteam\readme_zh.md" />
+    <Content Include="addons\godotsteam\win32\libgodotsteam.windows.template_debug.x86_32.dll" />
+    <Content Include="addons\godotsteam\win32\libgodotsteam.windows.template_release.x86_32.dll" />
+    <Content Include="addons\godotsteam\win32\steam_api.dll" />
+    <Content Include="addons\godotsteam\win64\libgodotsteam.windows.template_debug.x86_64.dll" />
+    <Content Include="addons\godotsteam\win64\libgodotsteam.windows.template_release.x86_64.dll" />
+    <Content Include="addons\godotsteam\win64\steam_api64.dll" />
+    <Content Include="addons\godotsteam\win64\steam_api64.dll~RF18700e89.TMP" />
+    <Content Include="addons\godotsteam\win64\~libgodotsteam.windows.template_debug.x86_64.dll" />
+    <Content Include="addons\godotsteam\win64\~libgodotsteam.windows.template_debug.x86_64.dll~RF15fd45c.TMP" />
+    <Content Include="addons\godotsteam\win64\~libgodotsteam.windows.template_debug.x86_64.dll~RF18700e89.TMP" />
+    <Content Include="addons\PixelShapeSystem\PointsShape\README.md" />
+    <Content Include="addons\PixelShapeSystem\README.md" />
+    <Content Include="addons\Vector2IExtensions.cs.uid" />
+    <Content Include="assets\StartGrund.tscn" />
+    <Content Include="src\CODE_STYLE.md" />
+    <Content Include="src\MapSystem\README.md" />
+    <Content Include="src\MapSystem\TODO.md" />
+    <Content Include="src\PROJECT_STANDARD.md" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="addons\PixelShapeSystem\QuadrangleShape\" />
+    <Folder Include="src\MapSystem\ChunkSystem\Persistence\" />
+    <Folder Include="src\MapSystem\WorldSystem\" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="addons\.venv\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Remove="addons\.venv\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <TypeScriptCompile Include="assets\tiles\tile_builder.ts" />
+  </ItemGroup>
+</Project>

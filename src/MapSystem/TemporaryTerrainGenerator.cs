@@ -25,19 +25,19 @@ namespace WorldWeaver.MapSystem
         /// 浅海阈值。
         /// <para>归一化噪声值小于该阈值时，生成浅海 Tile。</para>
         /// </summary>
-        private const float SHALLOW_SEA_THRESHOLD = 0.45f;
+        private const float SHALLOW_SEA_THRESHOLD = 0.57f;
 
         /// <summary>
         /// 沙地阈值。
         /// <para>归一化噪声值小于该阈值且不小于浅海阈值时，生成沙地 Tile。</para>
         /// </summary>
-        private const float SAND_THRESHOLD = 0.6f;
+        private const float SAND_THRESHOLD = 0.67f;
 
         /// <summary>
         /// 当前临时实现依赖的 TileType 名称数组。
-        /// <para>索引 0=shallowSea，1=sand，2=grass。</para>
+        /// <para>索引 0=shallow_sea，1=sand，2=grass。</para>
         /// </summary>
-        private static readonly string[] _TEMP_TILE_TYPE_NAMES = ["shallowSea", "sand", "grass"];
+        private static readonly string[] _TEMP_TILE_TYPE_NAMES = ["shallow_sea", "sand", "grass"];
 
         /// <summary>
         /// 当前临时实现依赖的 TileType 缓存。
@@ -95,7 +95,7 @@ namespace WorldWeaver.MapSystem
                 for (int globalX = minGlobalPosition.X; globalX <= maxGlobalPosition.X; globalX++)
                 {
                     // FastNoiseLite 原始输出范围通常为 [-1, 1]，这里先归一化到 [0, 1]，再做临时阈值映射。
-                    float normalizedNoiseValue = (fastNoise.GetNoise2D(globalX, globalY) + 1.0f) * 0.5f;
+                    float normalizedNoiseValue = (fastNoise.GetNoise2D(0.5f*globalX, 0.5f*globalY) + 1.0f) * 0.5f;
 
                     // 根据临时阈值选择地形类型，并写入对应的 TileRunId。
                     generatedTileRunIds[tileIndex] = SelectTemporaryTerrainTileRunId(normalizedNoiseValue, terrainTileTypes);
@@ -132,7 +132,7 @@ namespace WorldWeaver.MapSystem
 
                 if (tileType == null || tileType.TileTypeRunId <= 0)
                 {
-                    GD.PushError($"[TemporaryTerrainGenerator]: 无法生成临时地形，TileType '{tileTypeName}' 未找到或其 RunId 非法。请先确保已初始化并存在 shallowSea/sand/grass。"
+                    GD.PushError($"[TemporaryTerrainGenerator]: 无法生成临时地形，TileType '{tileTypeName}' 未找到或其 RunId 非法。请先确保已初始化并存在 shallow_sea/sand/grass。"
                     );
                     return null;
                 }

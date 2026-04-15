@@ -185,6 +185,16 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         }
 
         /// <summary>
+        /// 获取当前全部区块的调试快照。
+        /// <para>该方法仅用于调试输出，返回当前区块集合的列表副本。</para>
+        /// </summary>
+        public List<Chunk> GetChunksDebugSnapshot()
+        {
+            return [.. _chunks.Values];
+        }
+        
+
+        /// <summary>
         /// 创建并注册区块。
         /// </summary>
         public bool CreateChunk(ChunkPosition chunkPosition)
@@ -265,19 +275,18 @@ namespace WorldWeaver.MapSystem.ChunkSystem
                     out ChunkStateNode requestedStableNode)
                     ? requestedStableNode
                     : ChunkStateNode.Exit;
-
+                
+                // 获取现有区块的新状态后，把其对应更新项从更新表中移除。
+                LoadRequestProcessor.UpdateTable.RemoveChunk(chunk.CPosition);
+                
                 // 现有区块统一显式刷新最终目标稳定节点。
                 if (chunk.State.FinalStableNode != targetStableNode)
-                {
-                    chunk.State.SetFinalTarget(targetStableNode);
-                }
-
-                // 现有区块处理完后，立即把对应更新项从更新表中移除。
-                LoadRequestProcessor.UpdateTable.RemoveChunk(chunk.CPosition);
-
-                // 对当前区块执行一轮状态推进；若推进后到达 Exit，则登记到延迟删除列表。
-                ChunkStateNode updatedStateNode = UpdateChunkState(chunk);
-                if (updatedStateNode == ChunkStateNode.Exit)
+                    chunk.State.SetFinalStableNode(targetStableNode);
+                // 若当前节点并非终点节点，则推进状态
+                if (chunk.State.CurrentNode != chunk.State.FinalStableNode)
+                    UpdateChunkState(chunk);
+                // 若推进后到达 Exit，则登记到延迟删除列表。
+                if (chunk.State.CurrentNode == ChunkStateNode.Exit)
                 {
                     toRemove.Add(chunk.CPosition);
                 }
@@ -300,7 +309,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
                 // 新建区块同样显式刷新最终目标稳定节点。
                 if (createdChunk.State.FinalStableNode != updateEntry.Value)
                 {
-                    createdChunk.State.SetFinalTarget(updateEntry.Value);
+                    createdChunk.State.SetFinalStableNode(updateEntry.Value);
                 }
 
                 // 对新建区块执行一轮状态推进；若推进后到达 Exit，则登记到延迟删除列表。
@@ -323,22 +332,34 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 
         /// <summary>
         /// 对指定区块执行一轮状态推进。
-        /// <para>该方法会让 Chunk/State 选择目标节点、执行处理器、提交状态，并返回推进后的当前状态节点。</para>
+        /// <para>该方法会直接驱动 <see cref="Chunk.State"/> 选择目标节点、执行处理器、提交状态，并返回推进后的当前状态节点。</para>
         /// </summary>
         private ChunkStateNode UpdateChunkState(Chunk chunk)
         {
-            // 当前状态已经是 Exit 的区块无需再推进，直接返回 Exit。
-            if (chunk.StateNode == ChunkStateNode.Exit)
+            // 缺少状态对象或当前状态已经是 Exit 的区块无需再推进。
+            if (chunk?.State == null || chunk.State.CurrentNode == ChunkStateNode.Exit)
             {
                 return ChunkStateNode.Exit;
             }
 
-            // 先让 Chunk/State 给出“是否需要推进以及使用哪个处理器”。
-            StateHandler handler = chunk.GetStateUpdateHandler();
-            if (handler == null)
+            ChunkState state = chunk.State;
+
+            // 若当前尚未准备好下一跳结果，则先向状态对象询问“下一步该去哪个节点”。
+            // 这里由 Manager 直接驱动 State，不再经过 Chunk 的桥接包装方法。
+            if (state.TargetNode == null && !state.SelectTargetNode())
             {
-                return chunk.StateNode;
+                return state.CurrentNode;
             }
+
+            // 选路后依旧没有可推进的目标节点，说明本轮没有实际推进需求。
+            if (state.TargetNode == null)
+            {
+                return state.CurrentNode;
+            }
+
+            // 处理器按“当前节点”获取；若节点未配置 handler，则使用空处理器让状态直接推进。
+            // 这样可以保持“无副作用节点”也遵循统一的成功推进流程。
+            StateHandler handler = ChunkStateMachine.GetHandler(state.CurrentNode) ?? EmptyStateHandler.INSTANCE;
 
             // 然后由 Manager 统一执行当前节点的状态处理器。
             StateExecutionResult executionResult = ExecuteStateHandler(chunk, handler);
@@ -347,10 +368,10 @@ namespace WorldWeaver.MapSystem.ChunkSystem
                 case StateExecutionResult.Success:
                 {
                     // 处理器成功后，才允许提交状态推进结果。
-                    ChunkStateUpdateResult updateResult = chunk.StateUpdate();
+                    ChunkStateUpdateResult updateResult = state.UpdateToTargetNode();
                     if (updateResult == null)
                     {
-                        return chunk.StateNode;
+                        return state.CurrentNode;
                     }
 
                     // 统一广播“节点推进成功”事件。
@@ -379,12 +400,12 @@ namespace WorldWeaver.MapSystem.ChunkSystem
                 case StateExecutionResult.PermanentFailure:
                 case StateExecutionResult.RetryLater:
                     // 失败分支交给 ChunkState 内部策略处理（回退/阻塞/等待重试）。
-                    chunk.HandleStateExecutionFailure(executionResult);
-                    return chunk.StateNode;
+                    state.HandleExecutionFailure(executionResult);
+                    return state.CurrentNode;
             }
 
             // 兜底返回当前节点，保证所有路径都有明确结果。
-            return chunk.StateNode;
+            return state.CurrentNode;
         }
 
         /// <summary>

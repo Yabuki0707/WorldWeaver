@@ -79,32 +79,32 @@ namespace WorldWeaver.MapSystem.LayerSystem
         /// <summary>
         /// Chunk 宽度指数。
         /// </summary>
-        [Export(PropertyHint.Range, "1,29,1")]
+        [Export]
         public int ChunkWidthExp { get; set; } = DEFAULT_CHUNK_WIDTH_EXP;
 
         /// <summary>
         /// Chunk 高度指数。
         /// </summary>
-        [Export(PropertyHint.Range, "1,29,1")]
+        [Export]
         public int ChunkHeightExp { get; set; } = DEFAULT_CHUNK_HEIGHT_EXP;
 
         /// <summary>
         /// Grid 宽度指数（单位：Chunk）。
         /// </summary>
-        [Export(PropertyHint.Range, "1,29,1")]
+        [Export]
         public int GridWidthExp { get; set; } = DEFAULT_GRID_WIDTH_EXP;
 
         /// <summary>
         /// Grid 高度指数（单位：Chunk）。
         /// </summary>
-        [Export(PropertyHint.Range, "1,29,1")]
+        [Export]
         public int GridHeightExp { get; set; } = DEFAULT_GRID_HEIGHT_EXP;
 
 
         // ================================================================================
         //                                  运行时属性
         // ================================================================================
-
+        
         /// <summary>
         /// Chunk 大小配置。
         /// </summary>
@@ -159,6 +159,23 @@ namespace WorldWeaver.MapSystem.LayerSystem
             TheChunkManager = new ChunkManager(this);
             TheGridManager = new MapGridManager(this);
             _isInitialized = true;
+
+            // 图层节点通过物理帧统一驱动 ChunkManager 更新。
+            SetPhysicsProcess(true);
+        }
+
+        /// <summary>
+        /// 在物理帧中统一驱动 ChunkManager。
+        /// </summary>
+        public override void _PhysicsProcess(double delta)
+        {
+            if (!_isInitialized || TheChunkManager == null)
+            {
+                return;
+            }
+
+            // MapLayer 负责在物理帧中推进区块管理器。
+            TheChunkManager.Update();
         }
 
         /// <summary>

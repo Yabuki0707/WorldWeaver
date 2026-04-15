@@ -206,21 +206,18 @@ namespace WorldWeaver.MapSystem.LayerSystem
             {
                 return;
             }
-
+            Vector2I originGlobalTilePosition = chunkPosition.GetOriginGlobalTilePosition(OwnerLayer);
             // 双层循环遍历区块内全部局部坐标，并将每个 Tile 写入对应的全局格子。
             for (int localY = 0; localY < chunkData.Height; localY++)
             {
                 for (int localX = 0; localX < chunkData.Width; localX++)
                 {
                     // 先得到区块内的局部 Tile 坐标。
-                    Vector2I localTilePosition = new(localX, localY);
-
-                    // 再把局部坐标换算成 TileMapLayer 使用的全局 Tile 坐标。
-                    Vector2I globalTilePosition = chunkPosition.ToGlobalTilePosition(OwnerLayer.ChunkSize, localTilePosition);
-
+                    Vector2I tilePosition = new Vector2I(localX, localY);
                     // 当前格子的 TileRunId 直接来自区块数据。
-                    int tileRunId = chunkData.GetTile(localTilePosition) ?? 0;
-                    ApplyTileToCell(globalTilePosition, tileRunId);
+                    int tileRunId = chunkData.GetTile(tilePosition) ?? 0;
+                    tilePosition +=originGlobalTilePosition;
+                    ApplyTileToCell(tilePosition, tileRunId);
                 }
             }
         }
@@ -235,16 +232,14 @@ namespace WorldWeaver.MapSystem.LayerSystem
             {
                 return;
             }
-
-            // 与整块渲染对称，遍历整个区块范围并逐格清除。
+            Vector2I originGlobalTilePosition = chunkPosition.GetOriginGlobalTilePosition(OwnerLayer);
+            // 双层循环遍历区块内全部局部坐标，并将每个 Tile 写入对应的全局格子。
             for (int localY = 0; localY < OwnerLayer.ChunkSize.Height; localY++)
             {
-                for (int localX = 0; localX < OwnerLayer.ChunkSize.Width; localX++)
+                for (int localX = 0; localX < OwnerLayer.ChunkSize.Height; localX++)
                 {
-                    // 将当前局部坐标换算成全局格子位置后直接清除。
-                    Vector2I globalTilePosition = chunkPosition.ToGlobalTilePosition(
-                        OwnerLayer.ChunkSize,
-                        new Vector2I(localX, localY));
+                    // 先得到全局 Tile 坐标。
+                    Vector2I globalTilePosition = new Vector2I(localX, localY)+originGlobalTilePosition;
                     EraseCell(globalTilePosition);
                 }
             }
@@ -316,7 +311,8 @@ namespace WorldWeaver.MapSystem.LayerSystem
 
         /// <summary>
         /// 将 TileRunId 应用到 TileMapLayer 的单元格。
-        /// <para>runId 小于等于 0 时表示禁用渲染，直接清除格子；runId 大于 0 时先换算成 TileTypeTextureId 再写入。</para>
+        /// <para>runId 小于等于 0 时表示禁用渲染，直接清除格子；runId 大于 0 时先换算成 atlas 坐标再写入。</para>
+        /// <para>当前统一使用 sourceId=0 的 TileSet 源。</para>
         /// </summary>
         private void ApplyTileToCell(Vector2I globalTilePosition, int tileRunId)
         {
@@ -327,9 +323,9 @@ namespace WorldWeaver.MapSystem.LayerSystem
                 return;
             }
 
-            // 正常可见 Tile 先由 runId 找到类型，再取出真正用于渲染的 TileTypeTextureId。
-            int tileTypeTextureId = TileTypeManager.GetTypeByRunId(tileRunId).TileTypeTextureId;
-            SetCell(globalTilePosition, tileTypeTextureId, Vector2I.Zero, 0);
+            // 正常可见 Tile 先由 runId 找到类型，再取出真正用于渲染的 atlas 坐标。
+            Vector2I atlasCoordinates = TileTypeManager.GetTypeByRunId(tileRunId).TileTypeTextureId;
+            SetCell(globalTilePosition, 0, atlasCoordinates);
         }
     }
 }

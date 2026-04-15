@@ -1,17 +1,27 @@
-using System;
-
-namespace WorldWeaver.MapSystem.ChunkSystem.State.Handler
+﻿namespace WorldWeaver.MapSystem.ChunkSystem.State.Handler
 {
     /// <summary>
-    /// 正在从游戏删除状态处理器
-    /// <para>负责处理区块从游戏场景中卸载的过程。</para>
-    /// <para>此状态为过渡态，执行游戏对象的销毁和场景清理。</para>
+    /// 正在从游戏删除状态处理器。
+    /// <para>当前项目中区块离开游戏态的可视化卸载由 <c>MapVisualLayer</c> 事件驱动完成。</para>
+    /// <para>因此本处理器当前只负责做流程占位与上下文校验，不直接销毁额外的游戏对象。</para>
     /// </summary>
     public sealed class DeletingFromGameHandler : StateHandler
     {
+        // ================================================================================
+        //                                  状态处理方法
+        // ================================================================================
+
+        /// <summary>
+        /// 执行离开游戏态的占位逻辑。
+        /// </summary>
         public override StateExecutionResult Execute(ChunkManager manager, Chunk chunk)
         {
-            // 占位实现：当前版本暂未接入真实的游戏对象卸载流程，先返回成功。
+            if (!HandlerExecutionUtility.ValidateContext(manager, chunk, nameof(DeletingFromGameHandler)))
+            {
+                return StateExecutionResult.PermanentFailure;
+            }
+
+            // 当前没有额外的区块游戏对象需要在这里显式销毁，直接允许流程推进。
             return StateExecutionResult.Success;
         }
     }
