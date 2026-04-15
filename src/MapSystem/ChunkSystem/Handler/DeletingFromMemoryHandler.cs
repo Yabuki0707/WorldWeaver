@@ -1,4 +1,4 @@
-﻿namespace WorldWeaver.MapSystem.ChunkSystem.State.Handler
+namespace WorldWeaver.MapSystem.ChunkSystem.Handler
 {
     /// <summary>
     /// 正在从内存删除状态处理器。
@@ -16,7 +16,7 @@
         /// </summary>
         public override StateExecutionResult Execute(ChunkManager manager, Chunk chunk)
         {
-            if (!HandlerExecutionUtility.ValidateContext(manager, chunk, nameof(DeletingFromMemoryHandler)))
+            if (!ValidateHandlerExecutionObjects(manager, chunk))
             {
                 return StateExecutionResult.PermanentFailure;
             }

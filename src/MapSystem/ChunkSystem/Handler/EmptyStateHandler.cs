@@ -1,6 +1,4 @@
-using System;
-
-namespace WorldWeaver.MapSystem.ChunkSystem.State.Handler
+namespace WorldWeaver.MapSystem.ChunkSystem.Handler
 {
     /// <summary>
     /// 空状态处理器。

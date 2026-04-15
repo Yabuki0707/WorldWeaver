@@ -1,5 +1,5 @@
 using System;
-using WorldWeaver.MapSystem.ChunkSystem.State.Handler;
+using WorldWeaver.MapSystem.ChunkSystem.Handler;
 
 namespace WorldWeaver.MapSystem.ChunkSystem.State
 {

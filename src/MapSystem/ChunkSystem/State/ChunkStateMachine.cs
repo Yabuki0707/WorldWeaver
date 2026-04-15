@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Godot;
 using System.Runtime.CompilerServices;
-using WorldWeaver.MapSystem.ChunkSystem.State.Handler;
+using WorldWeaver.MapSystem.ChunkSystem.Handler;
 
 namespace WorldWeaver.MapSystem.ChunkSystem.State
 {

@@ -1,7 +1,7 @@
-﻿using Godot;
+using Godot;
 using WorldWeaver.MapSystem.ChunkSystem.Data;
 
-namespace WorldWeaver.MapSystem.ChunkSystem.State.Handler
+namespace WorldWeaver.MapSystem.ChunkSystem.Handler
 {
     /// <summary>
     /// 正在加载到内存状态处理器。
@@ -19,17 +19,15 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State.Handler
         /// </summary>
         public override StateExecutionResult Execute(ChunkManager manager, Chunk chunk)
         {
-            if (!HandlerExecutionUtility.ValidateContext(manager, chunk, nameof(LoadingInMemoryHandler)))
+            if (!ValidateHandlerExecutionObjects(manager, chunk))
             {
                 return StateExecutionResult.PermanentFailure;
             }
 
-            // 若区块已持有有效数据，则本阶段无需重复创建内存数据。
+            // 若区块已持有数据，则本阶段无需重复创建内存数据。
             if (chunk.Data != null)
             {
-                return HandlerExecutionUtility.ValidateLoadedChunkData(manager, chunk, nameof(LoadingInMemoryHandler))
-                    ? StateExecutionResult.Success
-                    : StateExecutionResult.PermanentFailure;
+                return StateExecutionResult.Success;
             }
 
             // 根据区块左上角原点和 ChunkSize 计算本块覆盖的全局闭区间范围。

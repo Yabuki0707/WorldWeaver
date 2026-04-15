@@ -1,6 +1,6 @@
-using System;
+using Godot;
 
-namespace WorldWeaver.MapSystem.ChunkSystem.State.Handler
+namespace WorldWeaver.MapSystem.ChunkSystem.Handler
 {
     /// <summary>
     /// 状态处理执行结果。
@@ -27,8 +27,43 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State.Handler
     /// 状态处理器抽象基类。
     /// <para>由 ChunkManager 调用，用于执行状态对应的副作用。</para>
     /// </summary>
-    public abstract class StateHandler : Object
+    public abstract class StateHandler : System.Object
     {
+        /// <summary>
+        /// 校验当前 handler 执行所依赖对象的有效性。
+        /// <para>该校验只覆盖执行入口必需对象，不承担具体状态数据合法性检查。</para>
+        /// </summary>
+        protected bool ValidateHandlerExecutionObjects(ChunkManager manager, Chunk chunk)
+        {
+            string handlerName = GetType().Name;
+
+            if (manager == null)
+            {
+                GD.PushError($"[{handlerName}] 执行失败：manager 为 null。");
+                return false;
+            }
+
+            if (manager.OwnerLayer == null)
+            {
+                GD.PushError($"[{handlerName}] 执行失败：manager.OwnerLayer 为 null。");
+                return false;
+            }
+
+            if (chunk == null)
+            {
+                GD.PushError($"[{handlerName}] 执行失败：chunk 为 null。");
+                return false;
+            }
+
+            if (chunk == Chunk.EMPTY)
+            {
+                GD.PushError($"[{handlerName}] 执行失败：chunk 为 Empty。");
+                return false;
+            }
+
+            return true;
+        }
+
         /// <summary>
         /// 执行状态副作用。
         /// </summary>
