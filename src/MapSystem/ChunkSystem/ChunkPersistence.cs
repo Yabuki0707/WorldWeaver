@@ -5,7 +5,6 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Godot;
-using Newtonsoft.Json;
 using WorldWeaver.MapSystem.ChunkSystem.Data;
 using WorldWeaver.MapSystem.GridSystem;
 using WorldWeaver.MapSystem.LayerSystem;
@@ -128,31 +127,9 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 		// ================================================================================
 
 		/// <summary>
-		/// 可序列化的 ChunkData 快照。
-		/// <para>用于统一同步/异步读写格式，避免直接反序列化 <see cref="ChunkData"/> 的构造歧义。</para>
-		/// </summary>
-		private sealed class ChunkDataSnapshot
-		{
-			/// <summary>
-			/// 区块宽度指数。
-			/// </summary>
-			public int WidthExp { get; set; }
-
-			/// <summary>
-			/// 区块高度指数。
-			/// </summary>
-			public int HeightExp { get; set; }
-
-			/// <summary>
-			/// Tile 数据快照。
-			/// </summary>
-			public int[] Tiles { get; set; }
-		}
-
-		/// <summary>
 		/// 异步加载结果。
 		/// </summary>
-		private sealed class LoadTaskResult(PersistenceRequestResult requestResult, ChunkData data)
+		private sealed class LoadTaskResult(PersistenceRequestResult requestResult, ChunkDataStorage storage)
 		{
 			/// <summary>
 			/// 请求结果。
@@ -160,10 +137,10 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 			public PersistenceRequestResult RequestResult { get; } = requestResult;
 
 			/// <summary>
-			/// 加载得到的区块数据。
+			/// 加载得到的区块储存对象。
 			/// <para>文件不存在时允许为 <see langword="null"/>。</para>
 			/// </summary>
-			public ChunkData Data { get; } = data;
+			public ChunkDataStorage Storage { get; } = storage;
 		}
 
 		/// <summary>
@@ -225,18 +202,17 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 				return PersistenceRequestResult.Success;
 			}
 
-			if (!TryCreateChunkDataSnapshot(chunk.Data, out ChunkDataSnapshot snapshot))
+			if (!TryCreateChunkDataStorage(chunk.Data, out ChunkDataStorage storage))
 			{
-				GD.PushError($"[ChunkPersistence] SaveBlocking: 区块 {chunk.Uid} 的 ChunkData 无法转换为有效快照。");
+				GD.PushError($"[ChunkPersistence] SaveBlocking: 区块 {chunk.Uid} 的 ChunkData 无法转换为有效储存对象。");
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
 			string path = GetChunkFilePath(ownerLayer, chunk, saveDir);
 			try
 			{
-				// 统一将 ChunkData 写为快照 JSON，确保同步/异步格式一致。
-				string json = JsonConvert.SerializeObject(snapshot);
-				File.WriteAllText(path, json);
+				// 统一将 ChunkData 写为压缩储存对象，确保同步/异步格式一致。
+				File.WriteAllBytes(path, storage.ToCompressedBytes());
 				nextAllowedBlockingTime = currentTime + BLOCKING_COOLDOWN_MS;
 				return PersistenceRequestResult.Success;
 			}
@@ -263,9 +239,9 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 		/// <summary>
 		/// 阻塞式加载（带冷却限制）。
 		/// </summary>
-		public static PersistenceRequestResult LoadBlocking(MapLayer ownerLayer, Chunk chunk, string saveDir, out ChunkData data)
+		public static PersistenceRequestResult LoadBlocking(MapLayer ownerLayer, Chunk chunk, string saveDir, out ChunkDataStorage storage)
 		{
-			data = null;
+			storage = null;
 			if (!ValidateCommonArguments(ownerLayer, chunk, nameof(LoadBlocking)))
 			{
 				return PersistenceRequestResult.PermanentFailure;
@@ -294,8 +270,8 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 					return PersistenceRequestResult.Success;
 				}
 
-				string json = File.ReadAllText(path);
-				PersistenceRequestResult deserializeResult = TryDeserializeChunkData(json, ownerLayer.ChunkSize, out data);
+				byte[] compressedBytes = File.ReadAllBytes(path);
+				PersistenceRequestResult deserializeResult = TryDeserializeChunkDataStorage(compressedBytes, ownerLayer.ChunkSize, out storage);
 				if (deserializeResult != PersistenceRequestResult.Success)
 				{
 					return deserializeResult;
@@ -332,9 +308,9 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 		/// <summary>
 		/// 尝试获取异步加载结果或启动任务。
 		/// </summary>
-		public static PersistenceRequestResult TryLoadAsync(MapLayer ownerLayer, Chunk chunk, string saveDir, out ChunkData data)
+		public static PersistenceRequestResult TryLoadAsync(MapLayer ownerLayer, Chunk chunk, string saveDir, out ChunkDataStorage storage)
 		{
-			data = null;
+			storage = null;
 			if (!ValidateCommonArguments(ownerLayer, chunk, nameof(TryLoadAsync)))
 			{
 				return PersistenceRequestResult.PermanentFailure;
@@ -359,7 +335,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 					return PersistenceRequestResult.PermanentFailure;
 				}
 
-				data = loadResult.Data;
+				storage = loadResult.Storage;
 				return loadResult.RequestResult;
 			}
 
@@ -427,13 +403,13 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 				return PersistenceRequestResult.Success;
 			}
 
-			if (!TryCreateChunkDataSnapshot(chunk.Data, out ChunkDataSnapshot snapshot))
+			if (!TryCreateChunkDataStorage(chunk.Data, out ChunkDataStorage storage))
 			{
-				GD.PushError($"[ChunkPersistence] TrySaveAsync: 区块 {chunk.Uid} 的 ChunkData 无法转换为有效快照。");
+				GD.PushError($"[ChunkPersistence] TrySaveAsync: 区块 {chunk.Uid} 的 ChunkData 无法转换为有效储存对象。");
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
-			CreateSaveTask(uid, GetChunkFilePath(ownerLayer, chunk, saveDir), snapshot);
+			CreateSaveTask(uid, GetChunkFilePath(ownerLayer, chunk, saveDir), storage);
 			return PersistenceRequestResult.RetryLater;
 		}
 
@@ -493,15 +469,10 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 						return;
 					}
 
-					string json;
-					using (StreamReader reader = new(path))
-					{
-						json = await reader.ReadToEndAsync();
-					}
-
-					PersistenceRequestResult requestResult = TryDeserializeChunkData(json, expectedChunkSize, out ChunkData data);
+					byte[] compressedBytes = await File.ReadAllBytesAsync(path);
+					PersistenceRequestResult requestResult = TryDeserializeChunkDataStorage(compressedBytes, expectedChunkSize, out ChunkDataStorage storage);
 					_RESULT_TABLE[resultKey] = new ResultEntry(
-						new LoadTaskResult(requestResult, data),
+						new LoadTaskResult(requestResult, storage),
 						Time.GetTicksMsec(),
 						PersistenceOperationType.Load);
 				}
@@ -542,7 +513,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 		/// <summary>
 		/// 创建异步保存任务。
 		/// </summary>
-		private static void CreateSaveTask(string uid, string path, ChunkDataSnapshot snapshot)
+		private static void CreateSaveTask(string uid, string path, ChunkDataStorage storage)
 		{
 			string resultKey = GetResultKey(uid, PersistenceOperationType.Save);
 			Task task = Task.Run(async () =>
@@ -550,11 +521,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 				await _CONCURRENCY_SEMAPHORE.WaitAsync();
 				try
 				{
-					string json = JsonConvert.SerializeObject(snapshot);
-					using (StreamWriter writer = new(path))
-					{
-						await writer.WriteAsync(json);
-					}
+					await File.WriteAllBytesAsync(path, storage.ToCompressedBytes());
 
 					_RESULT_TABLE[resultKey] = new ResultEntry(
 						PersistenceRequestResult.Success,
@@ -663,86 +630,59 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 		}
 
 		/// <summary>
-		/// 将 ChunkData 转换为可序列化快照。
+		/// 将 ChunkData 转换为可序列化储存对象。
 		/// </summary>
-		private static bool TryCreateChunkDataSnapshot(ChunkData data, out ChunkDataSnapshot snapshot)
+		private static bool TryCreateChunkDataStorage(ChunkData data, out ChunkDataStorage storage)
 		{
-			snapshot = null;
-			if (data == null || data.ElementSize == null || data.Tiles == null)
-			{
-				return false;
-			}
-
-			if (data.Tiles.Length != data.ElementSize.Area)
-			{
-				return false;
-			}
-
-			snapshot = new ChunkDataSnapshot
-			{
-				WidthExp = data.ElementSize.WidthExp,
-				HeightExp = data.ElementSize.HeightExp,
-				Tiles = data.Clone()
-			};
-			return true;
+			storage = ChunkDataStorage.FromData(data);
+			return storage != null;
 		}
 
 		/// <summary>
-		/// 将 JSON 反序列化为 ChunkData。
+		/// 将压缩字节反序列化为 ChunkData 储存对象。
 		/// </summary>
-		private static PersistenceRequestResult TryDeserializeChunkData(string json, MapElementSize expectedChunkSize, out ChunkData data)
+		private static PersistenceRequestResult TryDeserializeChunkDataStorage(byte[] compressedBytes, MapElementSize expectedChunkSize, out ChunkDataStorage storage)
 		{
-			data = null;
-			if (string.IsNullOrWhiteSpace(json))
+			storage = null;
+			if (compressedBytes == null || compressedBytes.Length == 0)
 			{
-				GD.PushError("[ChunkPersistence] 反序列化 ChunkData 失败：JSON 内容为空。\n");
+				GD.PushError("[ChunkPersistence] 反序列化 ChunkDataStorage 失败：压缩字节内容为空。\n");
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
-			ChunkDataSnapshot snapshot;
-			try
+			storage = ChunkDataStorage.FromCompressedBytes(compressedBytes);
+			if (storage == null)
 			{
-				snapshot = JsonConvert.DeserializeObject<ChunkDataSnapshot>(json);
-			}
-			catch (JsonException e)
-			{
-				GD.PushError($"[ChunkPersistence] 反序列化 ChunkDataSnapshot 失败: {e.Message}");
+				GD.PushError("[ChunkPersistence] 反序列化 ChunkDataStorage 失败：压缩字节无法解压或 JSON 无法解析。\n");
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
-			if (snapshot == null)
+			// 持久化器只接受当前 ChunkDataStorage 结构，不做旧 JSON 格式兼容。
+			if (!MapElementSize.IsValidExp(storage.WidthExp, storage.HeightExp))
 			{
-				GD.PushError("[ChunkPersistence] 反序列化 ChunkDataSnapshot 失败：结果为 null。\n");
+				GD.PushError($"[ChunkPersistence] 反序列化 ChunkDataStorage 失败：尺寸指数非法 ({storage.WidthExp}, {storage.HeightExp})。\n");
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
-			// 先校验快照中的尺寸指数是否合法。
-			if (!MapElementSize.IsValidExp(snapshot.WidthExp, snapshot.HeightExp))
+			MapElementSize storageSize = new(storage.WidthExp, storage.HeightExp);
+			if (storageSize != expectedChunkSize)
 			{
-				GD.PushError($"[ChunkPersistence] 反序列化 ChunkDataSnapshot 失败：尺寸指数非法 ({snapshot.WidthExp}, {snapshot.HeightExp})。\n");
+				GD.PushError($"[ChunkPersistence] 反序列化 ChunkDataStorage 失败：尺寸不匹配，期望={expectedChunkSize}，实际={storageSize}。\n");
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
-			MapElementSize snapshotSize = new(snapshot.WidthExp, snapshot.HeightExp);
-			if (snapshotSize != expectedChunkSize)
+			if (storage.Tiles == null)
 			{
-				GD.PushError($"[ChunkPersistence] 反序列化 ChunkDataSnapshot 失败：尺寸不匹配，期望={expectedChunkSize}，实际={snapshotSize}。\n");
+				GD.PushError("[ChunkPersistence] 反序列化 ChunkDataStorage 失败：Tiles 数组为 null。\n");
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
-			if (snapshot.Tiles == null)
+			if (storage.Tiles.Length != expectedChunkSize.Area)
 			{
-				GD.PushError("[ChunkPersistence] 反序列化 ChunkDataSnapshot 失败：Tiles 数组为 null。\n");
+				GD.PushError($"[ChunkPersistence] 反序列化 ChunkDataStorage 失败：Tiles 数组长度不匹配，期望={expectedChunkSize.Area}，实际={storage.Tiles.Length}。\n");
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
-			if (snapshot.Tiles.Length != expectedChunkSize.Area)
-			{
-				GD.PushError($"[ChunkPersistence] 反序列化 ChunkDataSnapshot 失败：Tiles 数组长度不匹配，期望={expectedChunkSize.Area}，实际={snapshot.Tiles.Length}。\n");
-				return PersistenceRequestResult.PermanentFailure;
-			}
-
-			data = new ChunkData(expectedChunkSize, snapshot.Tiles);
 			return PersistenceRequestResult.Success;
 		}
 	}

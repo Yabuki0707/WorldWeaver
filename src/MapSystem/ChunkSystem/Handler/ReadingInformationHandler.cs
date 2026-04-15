@@ -29,22 +29,28 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Handler
                 return StateExecutionResult.Success;
             }
 
-            // 同步读取区块持久化数据。
+            // 同步读取区块持久化储存对象。
             ChunkPersistence.PersistenceRequestResult requestResult =
-                ChunkPersistence.LoadBlocking(manager.OwnerLayer, chunk, manager.OwnerLayer.StorageFilePath, out ChunkData loadedData);
+                ChunkPersistence.LoadBlocking(manager.OwnerLayer, chunk, manager.OwnerLayer.StorageFilePath, out ChunkDataStorage loadedStorage);
 
             if (requestResult != ChunkPersistence.PersistenceRequestResult.Success)
             {
                 return ToStateExecutionResult(requestResult);
             }
 
-            // 文件不存在时 loadedData 为 null，属于正常情况，后续由内存加载阶段生成新数据。
-            if (loadedData == null)
+            // 文件不存在时 loadedStorage 为 null，属于正常情况，后续由内存加载阶段生成新数据。
+            if (loadedStorage == null)
             {
                 return StateExecutionResult.Success;
             }
 
-            // 将加载得到的区块数据挂载到当前区块，并校验尺寸匹配。
+            // 将储存对象转换为运行时 ChunkData，再挂载到当前区块并校验尺寸匹配。
+            ChunkData loadedData = loadedStorage.ToData();
+            if (loadedData == null)
+            {
+                return StateExecutionResult.PermanentFailure;
+            }
+
             if (!chunk.InitializeValidChunkData(loadedData, manager.OwnerLayer.ChunkSize))
             {
                 loadedData.Dispose();

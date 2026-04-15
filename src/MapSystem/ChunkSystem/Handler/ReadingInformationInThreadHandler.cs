@@ -29,22 +29,28 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Handler
                 return StateExecutionResult.Success;
             }
 
-            // 轮询异步读取结果；任务未完成时会返回 RetryLater。
+            // 轮询异步读取储存对象；任务未完成时会返回 RetryLater。
             ChunkPersistence.PersistenceRequestResult requestResult =
-                ChunkPersistence.TryLoadAsync(manager.OwnerLayer, chunk, manager.OwnerLayer.StorageFilePath, out ChunkData loadedData);
+                ChunkPersistence.TryLoadAsync(manager.OwnerLayer, chunk, manager.OwnerLayer.StorageFilePath, out ChunkDataStorage loadedStorage);
 
             if (requestResult != ChunkPersistence.PersistenceRequestResult.Success)
             {
                 return ToStateExecutionResult(requestResult);
             }
 
-            // 文件不存在时 loadedData 为 null，属于正常情况，后续由内存加载阶段生成新数据。
-            if (loadedData == null)
+            // 文件不存在时 loadedStorage 为 null，属于正常情况，后续由内存加载阶段生成新数据。
+            if (loadedStorage == null)
             {
                 return StateExecutionResult.Success;
             }
 
-            // 将后台读取完成的数据挂载到区块上。
+            // 将后台读取完成的储存对象转换为运行时 ChunkData，再挂载到区块上。
+            ChunkData loadedData = loadedStorage.ToData();
+            if (loadedData == null)
+            {
+                return StateExecutionResult.PermanentFailure;
+            }
+
             if (!chunk.InitializeValidChunkData(loadedData, manager.OwnerLayer.ChunkSize))
             {
                 loadedData.Dispose();
