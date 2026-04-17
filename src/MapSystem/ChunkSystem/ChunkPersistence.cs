@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -6,15 +6,15 @@ using System.Threading;
 using System.Threading.Tasks;
 using Godot;
 using WorldWeaver.MapSystem.ChunkSystem.Data;
-using WorldWeaver.MapSystem.GridSystem;
+using WorldWeaver.MapSystem.ChunkSystem.Persistence;
 using WorldWeaver.MapSystem.LayerSystem;
 
 namespace WorldWeaver.MapSystem.ChunkSystem
 {
 	/// <summary>
-	/// 区块持久化器，负责区块数据的读写。
-	/// <para>提供阻塞（带冷却）和非阻塞（带结果缓存与并发限制）两种方案。</para>
-	/// <para>当前对外统一返回 <see cref="PersistenceRequestResult"/>，以便状态处理器准确区分“成功 / 稍后重试 / 永久失败”。</para>
+	/// 区块持久化器。
+	/// <para>该类型负责区块数据的同步读写、异步任务调度与结果回收。</para>
+	/// <para>当前实现基于 ChunkRegion 文件完成阻塞式与异步式持久化。</para>
 	/// </summary>
 	public static class ChunkPersistence
 	{
@@ -23,22 +23,22 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 		// ================================================================================
 
 		/// <summary>
-		/// 最大并发任务数（非阻塞方案）。
+		/// 最大并发异步任务数量。
 		/// </summary>
 		private const int MAX_CONCURRENT_TASKS = 12;
 
 		/// <summary>
-		/// 主线程阻塞式保存/加载冷却时间（毫秒）。
+		/// 主线程阻塞式读写的冷却时长。
 		/// </summary>
 		private const ulong BLOCKING_COOLDOWN_MS = 700;
 
 		/// <summary>
-		/// 非阻塞方案结果缓存过期时间（毫秒）。
+		/// 异步结果默认过期时长。
 		/// </summary>
 		private const ulong DEFAULT_RESULT_EXPIRATION_MS = 20000;
 
 		/// <summary>
-		/// 冷却期间最大阻塞式请求数。
+		/// 在冷却窗口内允许累计的阻塞请求上限。
 		/// </summary>
 		private const int MAX_BLOCKING_REQUESTS_IN_COOLDOWN = 128;
 
@@ -69,55 +69,53 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 		public enum PersistenceRequestResult
 		{
 			/// <summary>
-			/// 持久化操作成功。
+			/// 请求成功完成。
 			/// </summary>
 			Success = 0,
 
 			/// <summary>
-			/// 当前无法完成，建议稍后重试。
+			/// 当前暂时无法完成，稍后可重试。
 			/// </summary>
 			RetryLater = 1,
 
 			/// <summary>
-			/// 当前请求存在结构性错误，不应继续重试。
+			/// 请求存在结构性错误，不应继续重试。
 			/// </summary>
 			PermanentFailure = 2
 		}
 
 
 		// ================================================================================
-		//                                  阻塞方案状态
+		//                                  阻塞窗口状态
 		// ================================================================================
 
 		/// <summary>
-		/// 下次允许阻塞式读写的时间戳。
+		/// 下一次允许进行阻塞式读写的时间戳。
 		/// </summary>
-		private static ulong nextAllowedBlockingTime = 0;
+		private static ulong nextAllowedBlockingTime;
 
 		/// <summary>
-		/// 冷却期间累计收到的阻塞式请求数量。
+		/// 当前冷却窗口内累计收到的阻塞请求数量。
 		/// </summary>
-		private static int blockingRequestCount = 0;
+		private static int blockingRequestCount;
 
 
 		// ================================================================================
-		//                                  异步方案状态
+		//                                  异步状态
 		// ================================================================================
 
 		/// <summary>
-		/// 活跃任务表。
-		/// <para>Key 使用 chunk uid；同一时刻同一区块只允许一个异步持久化任务存在。</para>
+		/// 当前活跃的异步任务表，键为区块 UID。
 		/// </summary>
 		private static readonly ConcurrentDictionary<string, Task> _ACTIVE_TASKS = new();
 
 		/// <summary>
-		/// 异步结果表。
-		/// <para>Key 使用 <c>uid + operationType</c>，供后续轮询获取任务结果。</para>
+		/// 已完成异步请求的结果表。
 		/// </summary>
 		private static readonly ConcurrentDictionary<string, ResultEntry> _RESULT_TABLE = new();
 
 		/// <summary>
-		/// 用于限制异步任务并发数的信号量。
+		/// 控制异步任务并发数量的信号量。
 		/// </summary>
 		private static readonly SemaphoreSlim _CONCURRENCY_SEMAPHORE = new(MAX_CONCURRENT_TASKS);
 
@@ -127,76 +125,63 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 		// ================================================================================
 
 		/// <summary>
-		/// 异步加载结果。
+		/// 异步加载任务的返回对象。
 		/// </summary>
 		private sealed class LoadTaskResult(PersistenceRequestResult requestResult, ChunkDataStorage storage)
 		{
 			/// <summary>
-			/// 请求结果。
+			/// 加载请求结果。
 			/// </summary>
 			public PersistenceRequestResult RequestResult { get; } = requestResult;
 
 			/// <summary>
-			/// 加载得到的区块储存对象。
-			/// <para>文件不存在时允许为 <see langword="null"/>。</para>
+			/// 加载得到的区块存储对象。
 			/// </summary>
 			public ChunkDataStorage Storage { get; } = storage;
 		}
 
 		/// <summary>
-		/// 结果表条目。
+		/// 结果表项。
 		/// </summary>
-		private sealed class ResultEntry(object result, ulong timestamp, PersistenceOperationType type)
+		private sealed class ResultEntry(object result, ulong timestamp, PersistenceOperationType operationType)
 		{
 			/// <summary>
 			/// 结果对象。
-			/// <para>加载操作对应 <see cref="LoadTaskResult"/>，保存操作对应 <see cref="PersistenceRequestResult"/>。</para>
 			/// </summary>
 			public object Result = result;
 
 			/// <summary>
-			/// 写入时间戳。
+			/// 写入结果表时的时间戳。
 			/// </summary>
 			public ulong Timestamp = timestamp;
 
 			/// <summary>
-			/// 操作类型。
+			/// 对应的持久化操作类型。
 			/// </summary>
-			public PersistenceOperationType OperationType = type;
+			public PersistenceOperationType OperationType = operationType;
 		}
 
 
 		// ================================================================================
-		//                                  阻塞方案
+		//                                  阻塞式读写
 		// ================================================================================
 
 		/// <summary>
-		/// 阻塞式保存（带冷却限制）。
+		/// 以阻塞方式保存区块数据。
 		/// </summary>
 		public static PersistenceRequestResult SaveBlocking(MapLayer ownerLayer, Chunk chunk, string saveDir)
 		{
-			if (!ValidateCommonArguments(ownerLayer, chunk, nameof(SaveBlocking)))
+			if (!ValidateCommonArguments(ownerLayer, chunk, saveDir, nameof(SaveBlocking)))
 			{
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
 			ulong currentTime = Time.GetTicksMsec();
-			if (currentTime < nextAllowedBlockingTime)
+			if (!TryEnterBlockingWindow(currentTime, chunk.Uid))
 			{
-				// 冷却中直接要求稍后重试，同时保留超量请求诊断。
-				if (blockingRequestCount == MAX_BLOCKING_REQUESTS_IN_COOLDOWN)
-				{
-					GD.PushError($"[ChunkPersistence] 阻塞式读写操作在冷却期间申请次数超过阈值 {MAX_BLOCKING_REQUESTS_IN_COOLDOWN}，当前时间={currentTime}，区块={chunk.Uid}。");
-				}
-
-				blockingRequestCount++;
 				return PersistenceRequestResult.RetryLater;
 			}
 
-			// 当前请求已通过冷却窗口，重置冷却计数。
-			blockingRequestCount = 0;
-
-			// 无数据时视为无需持久化，直接成功。
 			if (chunk.Data == null)
 			{
 				return PersistenceRequestResult.Success;
@@ -204,114 +189,137 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 
 			if (!TryCreateChunkDataStorage(chunk.Data, out ChunkDataStorage storage))
 			{
-				GD.PushError($"[ChunkPersistence] SaveBlocking: 区块 {chunk.Uid} 的 ChunkData 无法转换为有效储存对象。");
+				GD.PushError($"[ChunkPersistence] SaveBlocking: 区块 {chunk.Uid} 的 ChunkData 无法转换为有效存储对象。");
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
-			string path = GetChunkFilePath(ownerLayer, chunk, saveDir);
 			try
 			{
-				// 统一将 ChunkData 写为压缩储存对象，确保同步/异步格式一致。
-				File.WriteAllBytes(path, storage.ToCompressedBytes());
-				nextAllowedBlockingTime = currentTime + BLOCKING_COOLDOWN_MS;
-				return PersistenceRequestResult.Success;
+				string regionFilePath = GetRegionFilePath(saveDir, chunk.CPosition, true);
+				PersistenceRequestResult saveResult = ChunkRegionFreePartitionLockTable.ExecuteLocked(regionFilePath, () =>
+				{
+					if (!ChunkRegionFileAccessor.CreateRegion(saveDir, chunk.CPosition))
+					{
+						GD.PushError($"[ChunkPersistence] SaveBlocking: 无法为 {regionFilePath} 创建 Region 文件。");
+						return PersistenceRequestResult.PermanentFailure;
+					}
+
+					using ChunkRegionWriter regionWriter = OpenRegionWriter(saveDir, chunk.CPosition);
+					if (regionWriter == null)
+					{
+						GD.PushError($"[ChunkPersistence] SaveBlocking: 无法打开 Region 文件 {regionFilePath}。");
+						return PersistenceRequestResult.PermanentFailure;
+					}
+
+					regionWriter.SaveChunkStorage(chunk.CPosition, storage);
+					return PersistenceRequestResult.Success;
+				});
+
+				SetBlockingCooldown(currentTime);
+				return saveResult;
+			}
+			catch (InvalidDataException e)
+			{
+				SetBlockingCooldown(currentTime);
+				GD.PushError($"[ChunkPersistence] SaveBlocking: Region 数据非法，区块 {chunk.Uid} 保存失败: {e.Message}");
+				return PersistenceRequestResult.PermanentFailure;
 			}
 			catch (IOException e)
 			{
-				nextAllowedBlockingTime = currentTime + BLOCKING_COOLDOWN_MS;
-				GD.PushError($"[ChunkPersistence] SaveBlocking: 保存区块 {chunk.Uid} 到 {path} 失败: {e.Message}");
+				SetBlockingCooldown(currentTime);
+				GD.PushError($"[ChunkPersistence] SaveBlocking: 区块 {chunk.Uid} 保存失败: {e.Message}");
 				return PersistenceRequestResult.RetryLater;
 			}
 			catch (UnauthorizedAccessException e)
 			{
-				nextAllowedBlockingTime = currentTime + BLOCKING_COOLDOWN_MS;
-				GD.PushError($"[ChunkPersistence] SaveBlocking: 保存区块 {chunk.Uid} 到 {path} 被拒绝: {e.Message}");
+				SetBlockingCooldown(currentTime);
+				GD.PushError($"[ChunkPersistence] SaveBlocking: 区块 {chunk.Uid} 保存被拒绝: {e.Message}");
 				return PersistenceRequestResult.RetryLater;
 			}
 			catch (Exception e)
 			{
-				nextAllowedBlockingTime = currentTime + BLOCKING_COOLDOWN_MS;
-				GD.PushError($"[ChunkPersistence] SaveBlocking: 保存区块 {chunk.Uid} 时发生异常: {e.Message}");
+				SetBlockingCooldown(currentTime);
+				GD.PushError($"[ChunkPersistence] SaveBlocking: 区块 {chunk.Uid} 保存时发生异常: {e.Message}");
 				return PersistenceRequestResult.RetryLater;
 			}
 		}
 
 		/// <summary>
-		/// 阻塞式加载（带冷却限制）。
+		/// 以阻塞方式加载区块数据。
 		/// </summary>
 		public static PersistenceRequestResult LoadBlocking(MapLayer ownerLayer, Chunk chunk, string saveDir, out ChunkDataStorage storage)
 		{
 			storage = null;
-			if (!ValidateCommonArguments(ownerLayer, chunk, nameof(LoadBlocking)))
+			if (!ValidateCommonArguments(ownerLayer, chunk, saveDir, nameof(LoadBlocking)))
 			{
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
 			ulong currentTime = Time.GetTicksMsec();
-			if (currentTime < nextAllowedBlockingTime)
+			if (!TryEnterBlockingWindow(currentTime, chunk.Uid))
 			{
-				if (blockingRequestCount == MAX_BLOCKING_REQUESTS_IN_COOLDOWN)
-				{
-					GD.PushError($"[ChunkPersistence] 阻塞式读写操作在冷却期间申请次数超过阈值 {MAX_BLOCKING_REQUESTS_IN_COOLDOWN}，当前时间={currentTime}，区块={chunk.Uid}。");
-				}
-
-				blockingRequestCount++;
 				return PersistenceRequestResult.RetryLater;
 			}
 
-			blockingRequestCount = 0;
-			string path = GetChunkFilePath(ownerLayer, chunk, saveDir);
-
 			try
 			{
-				// 文件不存在是正常情况：表示当前区块尚无持久化数据。
-				if (!File.Exists(path))
+				string regionFilePath = GetRegionFilePath(saveDir, chunk.CPosition, false);
+				if (!ChunkRegionFileAccessor.IsRegionFileExists(saveDir, chunk.CPosition))
 				{
 					return PersistenceRequestResult.Success;
 				}
 
-				byte[] compressedBytes = File.ReadAllBytes(path);
-				PersistenceRequestResult deserializeResult = TryDeserializeChunkDataStorage(compressedBytes, ownerLayer.ChunkSize, out storage);
-				if (deserializeResult != PersistenceRequestResult.Success)
+				using ChunkRegionReader regionReader = OpenRegionReader(saveDir, chunk.CPosition);
+				if (regionReader == null)
 				{
-					return deserializeResult;
+					SetBlockingCooldown(currentTime);
+					GD.PushError($"[ChunkPersistence] LoadBlocking: 无法打开 Region 文件 {regionFilePath}。");
+					return PersistenceRequestResult.PermanentFailure;
 				}
 
-				nextAllowedBlockingTime = currentTime + BLOCKING_COOLDOWN_MS;
-				return PersistenceRequestResult.Success;
+				storage = regionReader.LoadChunkStorage(chunk.CPosition);
+				PersistenceRequestResult validateResult = ValidateLoadedStorage(storage, ownerLayer.ChunkSize);
+				SetBlockingCooldown(currentTime);
+				return validateResult;
+			}
+			catch (InvalidDataException e)
+			{
+				SetBlockingCooldown(currentTime);
+				GD.PushError($"[ChunkPersistence] LoadBlocking: Region 数据非法，区块 {chunk.Uid} 加载失败: {e.Message}");
+				return PersistenceRequestResult.PermanentFailure;
 			}
 			catch (IOException e)
 			{
-				nextAllowedBlockingTime = currentTime + BLOCKING_COOLDOWN_MS;
-				GD.PushError($"[ChunkPersistence] LoadBlocking: 从 {path} 加载区块 {chunk.Uid} 失败: {e.Message}");
+				SetBlockingCooldown(currentTime);
+				GD.PushError($"[ChunkPersistence] LoadBlocking: 区块 {chunk.Uid} 加载失败: {e.Message}");
 				return PersistenceRequestResult.RetryLater;
 			}
 			catch (UnauthorizedAccessException e)
 			{
-				nextAllowedBlockingTime = currentTime + BLOCKING_COOLDOWN_MS;
-				GD.PushError($"[ChunkPersistence] LoadBlocking: 读取 {path} 被拒绝: {e.Message}");
+				SetBlockingCooldown(currentTime);
+				GD.PushError($"[ChunkPersistence] LoadBlocking: 区块 {chunk.Uid} 读取被拒绝: {e.Message}");
 				return PersistenceRequestResult.RetryLater;
 			}
 			catch (Exception e)
 			{
-				nextAllowedBlockingTime = currentTime + BLOCKING_COOLDOWN_MS;
-				GD.PushError($"[ChunkPersistence] LoadBlocking: 读取区块 {chunk.Uid} 时发生异常: {e.Message}");
+				SetBlockingCooldown(currentTime);
+				GD.PushError($"[ChunkPersistence] LoadBlocking: 区块 {chunk.Uid} 读取时发生异常: {e.Message}");
 				return PersistenceRequestResult.RetryLater;
 			}
 		}
 
 
 		// ================================================================================
-		//                                  异步方案
+		//                                  异步接口
 		// ================================================================================
 
 		/// <summary>
-		/// 尝试获取异步加载结果或启动任务。
+		/// 尝试获取异步加载结果；若结果尚未就绪，则在需要时启动加载任务。
 		/// </summary>
 		public static PersistenceRequestResult TryLoadAsync(MapLayer ownerLayer, Chunk chunk, string saveDir, out ChunkDataStorage storage)
 		{
 			storage = null;
-			if (!ValidateCommonArguments(ownerLayer, chunk, nameof(TryLoadAsync)))
+			if (!ValidateCommonArguments(ownerLayer, chunk, saveDir, nameof(TryLoadAsync)))
 			{
 				return PersistenceRequestResult.PermanentFailure;
 			}
@@ -323,15 +331,13 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 			{
 				if (entry.OperationType != PersistenceOperationType.Load)
 				{
-					GD.PushError($"[ChunkPersistence] TryLoadAsync: 结果表项 {resultKey} 的操作类型错误。"
-					);
+					GD.PushError($"[ChunkPersistence] TryLoadAsync: 结果表项 {resultKey} 的操作类型不匹配。");
 					return PersistenceRequestResult.PermanentFailure;
 				}
 
 				if (entry.Result is not LoadTaskResult loadResult)
 				{
-					GD.PushError($"[ChunkPersistence] TryLoadAsync: 结果表项 {resultKey} 的数据类型错误。"
-					);
+					GD.PushError($"[ChunkPersistence] TryLoadAsync: 结果表项 {resultKey} 的数据类型不匹配。");
 					return PersistenceRequestResult.PermanentFailure;
 				}
 
@@ -339,28 +345,26 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 				return loadResult.RequestResult;
 			}
 
-			// 若已有同区块异步任务在跑，则本轮仅返回稍后重试。
 			if (_ACTIVE_TASKS.ContainsKey(uid))
 			{
 				return PersistenceRequestResult.RetryLater;
 			}
 
-			// 并发已满时，不启动新任务，保留后续轮询重试机会。
 			if (_ACTIVE_TASKS.Count >= MAX_CONCURRENT_TASKS)
 			{
 				return PersistenceRequestResult.RetryLater;
 			}
 
-			CreateLoadTask(uid, GetChunkFilePath(ownerLayer, chunk, saveDir), ownerLayer.ChunkSize);
+			CreateLoadTask(uid, chunk.CPosition, saveDir, ownerLayer.ChunkSize);
 			return PersistenceRequestResult.RetryLater;
 		}
 
 		/// <summary>
-		/// 尝试获取异步保存结果或启动任务。
+		/// 尝试获取异步保存结果；若结果尚未就绪，则在需要时启动保存任务。
 		/// </summary>
 		public static PersistenceRequestResult TrySaveAsync(MapLayer ownerLayer, Chunk chunk, string saveDir)
 		{
-			if (!ValidateCommonArguments(ownerLayer, chunk, nameof(TrySaveAsync)))
+			if (!ValidateCommonArguments(ownerLayer, chunk, saveDir, nameof(TrySaveAsync)))
 			{
 				return PersistenceRequestResult.PermanentFailure;
 			}
@@ -372,15 +376,13 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 			{
 				if (entry.OperationType != PersistenceOperationType.Save)
 				{
-					GD.PushError($"[ChunkPersistence] TrySaveAsync: 结果表项 {resultKey} 的操作类型错误。"
-					);
+					GD.PushError($"[ChunkPersistence] TrySaveAsync: 结果表项 {resultKey} 的操作类型不匹配。");
 					return PersistenceRequestResult.PermanentFailure;
 				}
 
 				if (entry.Result is not PersistenceRequestResult requestResult)
 				{
-					GD.PushError($"[ChunkPersistence] TrySaveAsync: 结果表项 {resultKey} 的数据类型错误。"
-					);
+					GD.PushError($"[ChunkPersistence] TrySaveAsync: 结果表项 {resultKey} 的数据类型不匹配。");
 					return PersistenceRequestResult.PermanentFailure;
 				}
 
@@ -397,7 +399,6 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 				return PersistenceRequestResult.RetryLater;
 			}
 
-			// 无数据时无需启动任务，直接视为保存成功。
 			if (chunk.Data == null)
 			{
 				return PersistenceRequestResult.Success;
@@ -405,62 +406,32 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 
 			if (!TryCreateChunkDataStorage(chunk.Data, out ChunkDataStorage storage))
 			{
-				GD.PushError($"[ChunkPersistence] TrySaveAsync: 区块 {chunk.Uid} 的 ChunkData 无法转换为有效储存对象。");
+				GD.PushError($"[ChunkPersistence] TrySaveAsync: 区块 {chunk.Uid} 的 ChunkData 无法转换为有效存储对象。");
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
-			CreateSaveTask(uid, GetChunkFilePath(ownerLayer, chunk, saveDir), storage);
+			CreateSaveTask(uid, chunk.CPosition, saveDir, storage);
 			return PersistenceRequestResult.RetryLater;
 		}
 
 
 		// ================================================================================
-		//                                  路径与任务方法
+		//                                  异步任务构建
 		// ================================================================================
-
-		/// <summary>
-		/// 获取区块存档路径。
-		/// </summary>
-		public static string GetChunkFilePath(MapLayer ownerLayer, Chunk chunk, string saveDir)
-		{
-			if (ownerLayer == null)
-			{
-				throw new ArgumentNullException(nameof(ownerLayer));
-			}
-
-			// 先将 Godot 的虚拟路径（如 user://）转换为操作系统可识别的绝对路径。
-			string absoluteSaveDir = ProjectSettings.GlobalizePath(saveDir);
-
-			// 1. 计算区块所属的 Grid 位置。
-			MapGridPosition gridPos = chunk.CPosition.ToGridPosition(ownerLayer);
-			string gridUid = gridPos.ToString();
-
-			// 2. 拼接 Grid 目录路径。
-			string gridDir = Path.Combine(absoluteSaveDir, gridUid);
-
-			// 3. 确保目录存在。
-			if (!DirAccess.DirExistsAbsolute(gridDir))
-			{
-				DirAccess.MakeDirRecursiveAbsolute(gridDir);
-			}
-
-			// 4. 返回完整文件路径。
-			return Path.Combine(gridDir, $"chunk_{chunk.Uid}.json");
-		}
 
 		/// <summary>
 		/// 创建异步加载任务。
 		/// </summary>
-		private static void CreateLoadTask(string uid, string path, MapElementSize expectedChunkSize)
+		private static void CreateLoadTask(string uid, ChunkPosition chunkPosition, string saveDir, MapElementSize expectedChunkSize)
 		{
 			string resultKey = GetResultKey(uid, PersistenceOperationType.Load);
-			Task task = Task.Run(async () =>
+			_ACTIVE_TASKS[uid] = Task.CompletedTask;
+			_ = Task.Run(async () =>
 			{
 				await _CONCURRENCY_SEMAPHORE.WaitAsync();
 				try
 				{
-					// 文件不存在视为成功，但没有持久化数据。
-					if (!File.Exists(path))
+					if (!ChunkRegionFileAccessor.IsRegionFileExists(saveDir, chunkPosition))
 					{
 						_RESULT_TABLE[resultKey] = new ResultEntry(
 							new LoadTaskResult(PersistenceRequestResult.Success, null),
@@ -469,10 +440,28 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 						return;
 					}
 
-					byte[] compressedBytes = await File.ReadAllBytesAsync(path);
-					PersistenceRequestResult requestResult = TryDeserializeChunkDataStorage(compressedBytes, expectedChunkSize, out ChunkDataStorage storage);
+					using ChunkRegionReader regionReader = OpenRegionReader(saveDir, chunkPosition);
+					if (regionReader == null)
+					{
+						_RESULT_TABLE[resultKey] = new ResultEntry(
+							new LoadTaskResult(PersistenceRequestResult.PermanentFailure, null),
+							Time.GetTicksMsec(),
+							PersistenceOperationType.Load);
+						return;
+					}
+
+					ChunkDataStorage storage = regionReader.LoadChunkStorage(chunkPosition);
+					PersistenceRequestResult requestResult = ValidateLoadedStorage(storage, expectedChunkSize);
 					_RESULT_TABLE[resultKey] = new ResultEntry(
 						new LoadTaskResult(requestResult, storage),
+						Time.GetTicksMsec(),
+						PersistenceOperationType.Load);
+				}
+				catch (InvalidDataException e)
+				{
+					GD.PushError($"[ChunkPersistence] 异步加载区块({uid})时检测到非法 Region 数据: {e.Message}");
+					_RESULT_TABLE[resultKey] = new ResultEntry(
+						new LoadTaskResult(PersistenceRequestResult.PermanentFailure, null),
 						Time.GetTicksMsec(),
 						PersistenceOperationType.Load);
 				}
@@ -506,25 +495,48 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 					_ACTIVE_TASKS.TryRemove(uid, out _);
 				}
 			});
-
-			_ACTIVE_TASKS[uid] = task;
 		}
 
 		/// <summary>
 		/// 创建异步保存任务。
 		/// </summary>
-		private static void CreateSaveTask(string uid, string path, ChunkDataStorage storage)
+		private static void CreateSaveTask(string uid, ChunkPosition chunkPosition, string saveDir, ChunkDataStorage storage)
 		{
 			string resultKey = GetResultKey(uid, PersistenceOperationType.Save);
-			Task task = Task.Run(async () =>
+			_ACTIVE_TASKS[uid] = Task.CompletedTask;
+			_ = Task.Run(async () =>
 			{
 				await _CONCURRENCY_SEMAPHORE.WaitAsync();
 				try
 				{
-					await File.WriteAllBytesAsync(path, storage.ToCompressedBytes());
+					string regionFilePath = GetRegionFilePath(saveDir, chunkPosition, true);
+					PersistenceRequestResult saveResult = ChunkRegionFreePartitionLockTable.ExecuteLocked(regionFilePath, () =>
+					{
+						if (!ChunkRegionFileAccessor.CreateRegion(saveDir, chunkPosition))
+						{
+							return PersistenceRequestResult.PermanentFailure;
+						}
+
+						using ChunkRegionWriter regionWriter = OpenRegionWriter(saveDir, chunkPosition);
+						if (regionWriter == null)
+						{
+							return PersistenceRequestResult.PermanentFailure;
+						}
+
+						regionWriter.SaveChunkStorage(chunkPosition, storage);
+						return PersistenceRequestResult.Success;
+					});
 
 					_RESULT_TABLE[resultKey] = new ResultEntry(
-						PersistenceRequestResult.Success,
+						saveResult,
+						Time.GetTicksMsec(),
+						PersistenceOperationType.Save);
+				}
+				catch (InvalidDataException e)
+				{
+					GD.PushError($"[ChunkPersistence] 异步保存区块({uid})时检测到非法 Region 数据: {e.Message}");
+					_RESULT_TABLE[resultKey] = new ResultEntry(
+						PersistenceRequestResult.PermanentFailure,
 						Time.GetTicksMsec(),
 						PersistenceOperationType.Save);
 				}
@@ -558,17 +570,15 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 					_ACTIVE_TASKS.TryRemove(uid, out _);
 				}
 			});
-
-			_ACTIVE_TASKS[uid] = task;
 		}
 
 
 		// ================================================================================
-		//                                  工具方法
+		//                                  通用工具方法
 		// ================================================================================
 
 		/// <summary>
-		/// 清除过期的异步结果。
+		/// 清理过期的异步结果。
 		/// </summary>
 		public static void ClearExpiredResults(ulong maxAgeMs = DEFAULT_RESULT_EXPIRATION_MS)
 		{
@@ -592,37 +602,113 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 		/// <summary>
 		/// 生成结果表键。
 		/// </summary>
-		private static string GetResultKey(string uid, PersistenceOperationType type)
+		private static string GetResultKey(string uid, PersistenceOperationType operationType)
 		{
-			return $"{uid}_{type}";
+			return $"{uid}_{operationType}";
 		}
 
 		/// <summary>
-		/// 验证阻塞/异步持久化共用参数。
+		/// 生成指定区块所属的 Region 文件路径。
 		/// </summary>
-		private static bool ValidateCommonArguments(MapLayer ownerLayer, Chunk chunk, string callerName)
+		private static string GetRegionFilePath(string saveDir, ChunkPosition chunkPosition, bool ensureDirectoryExists)
+		{
+			if (!ChunkRegionFilePath.TryGetRegionFilePath(saveDir, chunkPosition, out string regionFilePath))
+			{
+				throw new InvalidOperationException(
+					$"[ChunkPersistence] 无法为区块 {chunkPosition} 生成有效 Region 文件路径。");
+			}
+
+			if (ensureDirectoryExists)
+			{
+				string regionDirectoryPath = Path.GetDirectoryName(regionFilePath);
+				if (!string.IsNullOrWhiteSpace(regionDirectoryPath))
+				{
+					Directory.CreateDirectory(regionDirectoryPath);
+				}
+			}
+
+			return regionFilePath;
+		}
+
+		/// <summary>
+		/// 打开指定区块所属的 Region 读取器。
+		/// </summary>
+		private static ChunkRegionReader OpenRegionReader(string rootPath, ChunkPosition chunkPosition)
+		{
+			Vector2I regionPosition = ChunkRegionPositionProcessor.GetRegionPosition(chunkPosition);
+			return ChunkRegionReader.Open(rootPath, regionPosition);
+		}
+
+		/// <summary>
+		/// 打开指定区块所属的 Region 写入器。
+		/// </summary>
+		private static ChunkRegionWriter OpenRegionWriter(string rootPath, ChunkPosition chunkPosition)
+		{
+			Vector2I regionPosition = ChunkRegionPositionProcessor.GetRegionPosition(chunkPosition);
+			return ChunkRegionWriter.Open(rootPath, regionPosition);
+		}
+
+		/// <summary>
+		/// 尝试进入阻塞式读写窗口。
+		/// </summary>
+		private static bool TryEnterBlockingWindow(ulong currentTime, string chunkUid)
+		{
+			if (currentTime >= nextAllowedBlockingTime)
+			{
+				blockingRequestCount = 0;
+				return true;
+			}
+
+			if (blockingRequestCount == MAX_BLOCKING_REQUESTS_IN_COOLDOWN)
+			{
+				GD.PushError(
+					$"[ChunkPersistence] 冷却窗口内的阻塞式请求次数超过阈值 {MAX_BLOCKING_REQUESTS_IN_COOLDOWN}，当前时间 {currentTime}，区块 {chunkUid}。");
+			}
+
+			blockingRequestCount++;
+			return false;
+		}
+
+		/// <summary>
+		/// 设置新的阻塞冷却截止时间。
+		/// </summary>
+		private static void SetBlockingCooldown(ulong currentTime)
+		{
+			nextAllowedBlockingTime = currentTime + BLOCKING_COOLDOWN_MS;
+		}
+
+		/// <summary>
+		/// 校验持久化公共参数。
+		/// </summary>
+		private static bool ValidateCommonArguments(MapLayer ownerLayer, Chunk chunk, string saveDir, string callerName)
 		{
 			if (ownerLayer == null)
 			{
-				GD.PushError($"[ChunkPersistence] {callerName}: ownerLayer 参数为 null。\n");
+				GD.PushError($"[ChunkPersistence] {callerName}: ownerLayer 参数不能为 null。");
 				return false;
 			}
 
 			if (chunk == null)
 			{
-				GD.PushError($"[ChunkPersistence] {callerName}: chunk 参数为 null。\n");
+				GD.PushError($"[ChunkPersistence] {callerName}: chunk 参数不能为 null。");
 				return false;
 			}
 
 			if (chunk == Chunk.EMPTY)
 			{
-				GD.PushError($"[ChunkPersistence] {callerName}: chunk 参数为 Empty。\n");
+				GD.PushError($"[ChunkPersistence] {callerName}: chunk 参数不能为 Empty。");
 				return false;
 			}
 
 			if (string.IsNullOrWhiteSpace(chunk.Uid))
 			{
-				GD.PushError($"[ChunkPersistence] {callerName}: chunk.Uid 为空。\n");
+				GD.PushError($"[ChunkPersistence] {callerName}: chunk.Uid 不能为空。");
+				return false;
+			}
+
+			if (string.IsNullOrWhiteSpace(saveDir))
+			{
+				GD.PushError($"[ChunkPersistence] {callerName}: saveDir 不能为空。");
 				return false;
 			}
 
@@ -630,7 +716,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 		}
 
 		/// <summary>
-		/// 将 ChunkData 转换为可序列化储存对象。
+		/// 将运行时 ChunkData 转换为可持久化的 ChunkDataStorage。
 		/// </summary>
 		private static bool TryCreateChunkDataStorage(ChunkData data, out ChunkDataStorage storage)
 		{
@@ -639,47 +725,40 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 		}
 
 		/// <summary>
-		/// 将压缩字节反序列化为 ChunkData 储存对象。
+		/// 校验已加载的存储对象是否与当前区块尺寸匹配。
 		/// </summary>
-		private static PersistenceRequestResult TryDeserializeChunkDataStorage(byte[] compressedBytes, MapElementSize expectedChunkSize, out ChunkDataStorage storage)
+		private static PersistenceRequestResult ValidateLoadedStorage(ChunkDataStorage storage, MapElementSize expectedChunkSize)
 		{
-			storage = null;
-			if (compressedBytes == null || compressedBytes.Length == 0)
-			{
-				GD.PushError("[ChunkPersistence] 反序列化 ChunkDataStorage 失败：压缩字节内容为空。\n");
-				return PersistenceRequestResult.PermanentFailure;
-			}
-
-			storage = ChunkDataStorage.FromCompressedBytes(compressedBytes);
 			if (storage == null)
 			{
-				GD.PushError("[ChunkPersistence] 反序列化 ChunkDataStorage 失败：压缩字节无法解压或 JSON 无法解析。\n");
-				return PersistenceRequestResult.PermanentFailure;
+				return PersistenceRequestResult.Success;
 			}
 
-			// 持久化器只接受当前 ChunkDataStorage 结构，不做旧 JSON 格式兼容。
 			if (!MapElementSize.IsValidExp(storage.WidthExp, storage.HeightExp))
 			{
-				GD.PushError($"[ChunkPersistence] 反序列化 ChunkDataStorage 失败：尺寸指数非法 ({storage.WidthExp}, {storage.HeightExp})。\n");
+				GD.PushError(
+					$"[ChunkPersistence] 已加载的 ChunkDataStorage 尺寸指数非法 ({storage.WidthExp}, {storage.HeightExp})。");
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
 			MapElementSize storageSize = new(storage.WidthExp, storage.HeightExp);
 			if (storageSize != expectedChunkSize)
 			{
-				GD.PushError($"[ChunkPersistence] 反序列化 ChunkDataStorage 失败：尺寸不匹配，期望={expectedChunkSize}，实际={storageSize}。\n");
+				GD.PushError(
+					$"[ChunkPersistence] 已加载的 ChunkDataStorage 尺寸不匹配，期望 {expectedChunkSize}，实际 {storageSize}。");
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
 			if (storage.Tiles == null)
 			{
-				GD.PushError("[ChunkPersistence] 反序列化 ChunkDataStorage 失败：Tiles 数组为 null。\n");
+				GD.PushError("[ChunkPersistence] 已加载的 ChunkDataStorage 的 Tiles 不能为 null。");
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
 			if (storage.Tiles.Length != expectedChunkSize.Area)
 			{
-				GD.PushError($"[ChunkPersistence] 反序列化 ChunkDataStorage 失败：Tiles 数组长度不匹配，期望={expectedChunkSize.Area}，实际={storage.Tiles.Length}。\n");
+				GD.PushError(
+					$"[ChunkPersistence] 已加载的 ChunkDataStorage 的 Tiles 长度不匹配，期望 {expectedChunkSize.Area}，实际 {storage.Tiles.Length}。");
 				return PersistenceRequestResult.PermanentFailure;
 			}
 

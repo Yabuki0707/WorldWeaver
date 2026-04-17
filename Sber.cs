@@ -29,7 +29,7 @@ public partial class Sber : Node2D
 	/// 请求矩形的半径。
 	/// <para>当前固定为 2，对应总范围 5x5 区块。</para>
 	/// </summary>
-	private const int REQUEST_HALF_EXTENT = 5;
+	private const int REQUEST_HALF_EXTENT = 7;
 
 
 	// ================================================================================
