@@ -16,29 +16,11 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         public readonly struct ChunkHeaderData(uint firstPartitionIndex, ushort lastPartitionDataLength, uint partitionCount, long timestamp)
         {
-            /// <summary>
-            /// 区块数据链的首分区索引。
-            /// </summary>
             public uint FirstPartitionIndex { get; } = firstPartitionIndex;
-
-            /// <summary>
-            /// 最后一个分区中的有效数据长度。
-            /// </summary>
             public ushort LastPartitionDataLength { get; } = lastPartitionDataLength;
-
-            /// <summary>
-            /// 当前区块占用的分区总数。
-            /// </summary>
             public uint PartitionCount { get; } = partitionCount;
-
-            /// <summary>
-            /// 区块头记录中的时间戳。
-            /// </summary>
             public long Timestamp { get; } = timestamp;
 
-            /// <summary>
-            /// 当前头记录是否为空。
-            /// </summary>
             public bool IsEmpty =>
                 FirstPartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL &&
                 LastPartitionDataLength == 0 &&
@@ -50,14 +32,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         public readonly struct FreePartitionState(uint headFreePartitionIndex, uint freePartitionCount)
         {
-            /// <summary>
-            /// 当前空闲分区链表头索引。
-            /// </summary>
             public uint HeadFreePartitionIndex { get; } = headFreePartitionIndex;
-
-            /// <summary>
-            /// 当前空闲分区总数。
-            /// </summary>
             public uint FreePartitionCount { get; } = freePartitionCount;
         }
 
@@ -66,16 +41,21 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         public static ChunkHeaderData? ReadChunkHeaderData(FileStream stream, Vector2I localChunkPosition)
         {
-            if (!ChunkRegionPositionProcessor.ValidateLocalChunkPosition(localChunkPosition))
+            if (!ChunkRegionFileLayout.TryGetChunkDataOffsetInFile(localChunkPosition, out long chunkDataOffsetInFile))
             {
                 return null;
             }
 
             // 头数据按固定长度连续布局，读取后直接按既定字段顺序反序列化即可。
-            byte[] headerBytes = ChunkRegionFileAccessor.ReadBytes(
-                stream,
-                ChunkRegionFileLayout.GetChunkDataOffsetInFile(localChunkPosition),
-                ChunkRegionFileLayout.CHUNK_DATA_ENTRY_SIZE);
+            if (!ChunkRegionFileAccessor.TryReadBytes(
+                    stream,
+                    chunkDataOffsetInFile,
+                    ChunkRegionFileLayout.CHUNK_DATA_ENTRY_SIZE,
+                    out byte[] headerBytes))
+            {
+                return null;
+            }
+
             return new ChunkHeaderData(
                 BinaryPrimitives.ReadUInt32LittleEndian(headerBytes.AsSpan(0, sizeof(uint))),
                 BinaryPrimitives.ReadUInt16LittleEndian(headerBytes.AsSpan(sizeof(uint), sizeof(ushort))),
@@ -88,7 +68,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         public static bool WriteChunkHeaderData(FileStream stream, Vector2I localChunkPosition, ChunkHeaderData chunkHeaderData)
         {
-            if (!ChunkRegionPositionProcessor.ValidateLocalChunkPosition(localChunkPosition))
+            if (!ChunkRegionFileLayout.TryGetChunkDataOffsetInFile(localChunkPosition, out long chunkDataOffsetInFile))
             {
                 return false;
             }
@@ -108,8 +88,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
             BinaryPrimitives.WriteInt64LittleEndian(
                 headerBytes.Slice(sizeof(uint) + sizeof(ushort) + sizeof(uint), sizeof(long)),
                 chunkHeaderData.Timestamp);
-            ChunkRegionFileAccessor.WriteBytes(stream, ChunkRegionFileLayout.GetChunkDataOffsetInFile(localChunkPosition), headerBytes);
-            return true;
+            return ChunkRegionFileAccessor.TryWriteBytes(stream, chunkDataOffsetInFile, headerBytes);
         }
 
         /// <summary>
@@ -132,26 +111,33 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// <summary>
         /// 读取空闲分区头状态。
         /// </summary>
-        public static FreePartitionState ReadFreePartitionState(FileStream stream)
+        public static bool TryReadFreePartitionState(FileStream stream, out FreePartitionState freePartitionState)
         {
-            byte[] stateBytes = ChunkRegionFileAccessor.ReadBytes(
-                stream,
-                ChunkRegionFileLayout.HEAD_FREE_PARTITION_INDEX_OFFSET_IN_FILE,
-                ChunkRegionFileLayout.HEAD_FREE_PARTITION_INDEX_SIZE + ChunkRegionFileLayout.FREE_PARTITION_COUNT_SIZE);
-            return new FreePartitionState(
+            freePartitionState = default;
+            if (!ChunkRegionFileAccessor.TryReadBytes(
+                    stream,
+                    ChunkRegionFileLayout.HEAD_FREE_PARTITION_INDEX_OFFSET_IN_FILE,
+                    ChunkRegionFileLayout.HEAD_FREE_PARTITION_INDEX_SIZE + ChunkRegionFileLayout.FREE_PARTITION_COUNT_SIZE,
+                    out byte[] stateBytes))
+            {
+                return false;
+            }
+
+            freePartitionState = new FreePartitionState(
                 BinaryPrimitives.ReadUInt32LittleEndian(
                     stateBytes.AsSpan(0, ChunkRegionFileLayout.HEAD_FREE_PARTITION_INDEX_SIZE)),
                 BinaryPrimitives.ReadUInt32LittleEndian(
                     stateBytes.AsSpan(
                         ChunkRegionFileLayout.HEAD_FREE_PARTITION_INDEX_SIZE,
                         ChunkRegionFileLayout.FREE_PARTITION_COUNT_SIZE)));
+            return true;
         }
 
         /// <summary>
         /// 写入空闲分区头状态。
         /// <para>该方法只负责字节写入，不负责状态合法性校验。</para>
         /// </summary>
-        public static void WriteFreePartitionState(FileStream stream, FreePartitionState freePartitionState)
+        public static bool WriteFreePartitionState(FileStream stream, FreePartitionState freePartitionState)
         {
             Span<byte> stateBytes = stackalloc byte[
                 ChunkRegionFileLayout.HEAD_FREE_PARTITION_INDEX_SIZE + ChunkRegionFileLayout.FREE_PARTITION_COUNT_SIZE];
@@ -161,7 +147,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
             BinaryPrimitives.WriteUInt32LittleEndian(
                 stateBytes.Slice(ChunkRegionFileLayout.HEAD_FREE_PARTITION_INDEX_SIZE, ChunkRegionFileLayout.FREE_PARTITION_COUNT_SIZE),
                 freePartitionState.FreePartitionCount);
-            ChunkRegionFileAccessor.WriteBytes(stream, ChunkRegionFileLayout.HEAD_FREE_PARTITION_INDEX_OFFSET_IN_FILE, stateBytes);
+            return ChunkRegionFileAccessor.TryWriteBytes(stream, ChunkRegionFileLayout.HEAD_FREE_PARTITION_INDEX_OFFSET_IN_FILE, stateBytes);
         }
 
         /// <summary>
@@ -210,6 +196,5 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
 
             return true;
         }
-
     }
 }

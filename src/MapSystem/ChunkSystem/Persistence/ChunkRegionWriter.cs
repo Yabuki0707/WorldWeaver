@@ -12,18 +12,11 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
     /// </summary>
     public sealed class ChunkRegionWriter : ChunkRegionFileAccessor
     {
-        /// <summary>
-        /// 仅允许通过 Open 创建写入器实例。
-        /// </summary>
         private ChunkRegionWriter(string regionFilePath, Vector2I regionPosition, FileStream stream)
             : base(regionFilePath, regionPosition, stream)
         {
         }
 
-        /// <summary>
-        /// 打开指定 rootPath 下的 region 写入器。
-        /// <para>若文件不存在、路径不匹配或格式校验失败，则返回 null 并输出警告。</para>
-        /// </summary>
         public new static ChunkRegionWriter Open(string rootPath, Vector2I regionPosition)
         {
             if (!TryOpenValidatedStream(rootPath, regionPosition, System.IO.FileAccess.ReadWrite, out string regionFilePath, out FileStream stream))
@@ -142,7 +135,12 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                 return null;
             }
 
-            freePartitionChain.FlushStateToFile();
+            if (!freePartitionChain.FlushStateToFile())
+            {
+                GD.PushError("[ChunkRegionWriter] AllocatePartitionIndices: 写回空闲分区头状态失败。");
+                return null;
+            }
+
             return partitionIndices;
         }
 
@@ -168,11 +166,16 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                     return false;
                 }
 
-                ChunkRegionPartitionOperator.WritePartition(
-                    Stream,
-                    partitionIndices[i],
-                    nextPartitionIndex,
-                    compressedBytes.AsSpan(writtenLength, currentWriteLength));
+                if (!ChunkRegionPartitionOperator.WritePartition(
+                        Stream,
+                        partitionIndices[i],
+                        nextPartitionIndex,
+                        compressedBytes.AsSpan(writtenLength, currentWriteLength)))
+                {
+                    GD.PushError("[ChunkRegionWriter] WriteNewChunkChain: 写入 chunk 分区失败。");
+                    return false;
+                }
+
                 writtenLength += currentWriteLength;
                 // 这里只持续覆盖最后一次写入长度，循环结束后自然就是最后分区的有效字节数。
                 lastPartitionDataLength = checked((ushort)currentWriteLength);
@@ -223,18 +226,24 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                 }
 
                 // 先读出旧 next，再把当前分区挂入空闲链，否则当前分区的 next 会被注册逻辑覆盖掉。
-                uint nextPartitionIndex = ChunkRegionPartitionOperator.ReadPartitionNextIndex(Stream, currentPartitionIndex);
-                freePartitionChain.RegisterHeadPartition(currentPartitionIndex);
-                if (!ChunkRegionFreePartitionChain.IsFreePartitionStateValid(Stream, freePartitionChain.FreePartitionState))
+                if (!ChunkRegionPartitionOperator.TryReadValidatedNextPartitionIndex(Stream, currentPartitionIndex, out uint nextPartitionIndex))
                 {
-                    GD.PushError("[ChunkRegionWriter] RecycleOldChunkChain: 回收旧链时写入空闲分区状态失败。");
+                    GD.PushError("[ChunkRegionWriter] RecycleOldChunkChain: 读取旧 chunk 分区链 next 索引失败。");
+                    return false;
+                }
+
+                ChunkRegionHeaderOperator.FreePartitionState oldFreePartitionState = freePartitionChain.FreePartitionState;
+                ChunkRegionHeaderOperator.FreePartitionState newFreePartitionState = freePartitionChain.RegisterHeadPartition(currentPartitionIndex);
+                if (newFreePartitionState.HeadFreePartitionIndex == oldFreePartitionState.HeadFreePartitionIndex &&
+                    newFreePartitionState.FreePartitionCount == oldFreePartitionState.FreePartitionCount)
+                {
+                    GD.PushError("[ChunkRegionWriter] RecycleOldChunkChain: 将旧分区注册到空闲分区链失败。");
                     return false;
                 }
 
                 if (nextPartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL)
                 {
-                    freePartitionChain.FlushStateToFile();
-                    return true;
+                    return freePartitionChain.FlushStateToFile();
                 }
 
                 currentPartitionIndex = nextPartitionIndex;

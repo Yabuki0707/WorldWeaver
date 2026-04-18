@@ -16,8 +16,6 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
             if (localChunkPosition.X < 0 || localChunkPosition.X >= ChunkRegionFileLayout.REGION_CHUNK_AXIS ||
                 localChunkPosition.Y < 0 || localChunkPosition.Y >= ChunkRegionFileLayout.REGION_CHUNK_AXIS)
             {
-                GD.PushError(
-                    $"[ChunkRegionPositionProcessor] ValidateLocalChunkPosition: localChunkPosition=({localChunkPosition.X}, {localChunkPosition.Y}) 超出合法范围。");
                 return false;
             }
 

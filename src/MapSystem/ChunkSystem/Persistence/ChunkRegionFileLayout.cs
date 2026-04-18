@@ -116,141 +116,148 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// <summary>
         /// 标准 ChunkRegion 格式。
         /// </summary>
-        public static readonly ChunkRegionFormat STANDARD_FORMAT = new(
-            FORMAT_AREA_DICTIONARY,
-            INTRODUCTION_AREA_DICTIONARY,
-            HEADER_AREA_DICTIONARY,
-            PARTITION_AREA_DICTIONARY);
-
-
+        public static readonly ChunkRegionFormat STANDARD_FORMAT;
 
         /// <summary>
         /// 格式区域在整个文件中的起始偏移。
         /// </summary>
-        public static readonly long FORMAT_AREA_OFFSET_IN_FILE = 0;
+        public static readonly long FORMAT_AREA_OFFSET_IN_FILE;
 
         /// <summary>
         /// 格式区域总大小。
         /// </summary>
-        public static readonly int FORMAT_AREA_SIZE = STANDARD_FORMAT.GetAreaSize(FORMAT_AREA_DICTIONARY);
-
-
+        public static readonly int FORMAT_AREA_SIZE;
 
         /// <summary>
         /// 介绍区域在整个文件中的起始偏移。
         /// </summary>
-        public static readonly long INTRODUCTION_AREA_OFFSET_IN_FILE =
-            FORMAT_AREA_OFFSET_IN_FILE + FORMAT_AREA_SIZE;
+        public static readonly long INTRODUCTION_AREA_OFFSET_IN_FILE;
 
         /// <summary>
         /// 介绍区域总大小。
         /// </summary>
-        public static readonly int INTRODUCTION_AREA_SIZE = STANDARD_FORMAT.GetAreaSize(INTRODUCTION_AREA_DICTIONARY);
-
-
+        public static readonly int INTRODUCTION_AREA_SIZE;
 
         /// <summary>
         /// 头数据区域在整个文件中的起始偏移。
         /// </summary>
-        public static readonly long HEADER_AREA_OFFSET_IN_FILE =
-            INTRODUCTION_AREA_OFFSET_IN_FILE + INTRODUCTION_AREA_SIZE;
+        public static readonly long HEADER_AREA_OFFSET_IN_FILE;
 
         /// <summary>
         /// 头数据区域总大小。
         /// </summary>
-        public static readonly int HEADER_AREA_SIZE = STANDARD_FORMAT.GetAreaSize(HEADER_AREA_DICTIONARY);
-        
+        public static readonly int HEADER_AREA_SIZE;
+
         /// <summary>
         /// 区块头数据区域在整个文件中的起始偏移。
         /// </summary>
-        public static readonly long CHUNK_DATA_OFFSET_IN_FILE =
-            HEADER_AREA_OFFSET_IN_FILE + STANDARD_FORMAT.GetFieldOffset(HEADER_AREA_DICTIONARY, "ChunkData");
+        public static readonly long CHUNK_DATA_OFFSET_IN_FILE;
 
-        
-        
         /// <summary>
         /// 分区区域在整个文件中的起始偏移。
         /// </summary>
-        public static readonly long PARTITION_AREA_OFFSET_IN_FILE =
-            HEADER_AREA_OFFSET_IN_FILE + HEADER_AREA_SIZE;
+        public static readonly long PARTITION_AREA_OFFSET_IN_FILE;
 
         /// <summary>
         /// 单条 chunk 头数据记录的字节大小。
         /// </summary>
-        public static readonly int CHUNK_DATA_ENTRY_SIZE =
-            STANDARD_FORMAT.GetFieldSize(HEADER_AREA_DICTIONARY, "ChunkData");
+        public static readonly int CHUNK_DATA_ENTRY_SIZE;
 
-        
-        
         /// <summary>
         /// 头空闲分区索引在整个文件中的偏移。
         /// </summary>
-        public static readonly long HEAD_FREE_PARTITION_INDEX_OFFSET_IN_FILE =
-            HEADER_AREA_OFFSET_IN_FILE + STANDARD_FORMAT.GetFieldOffset(HEADER_AREA_DICTIONARY, "HeadFreePartitionIndex");
+        public static readonly long HEAD_FREE_PARTITION_INDEX_OFFSET_IN_FILE;
 
         /// <summary>
         /// 头空闲分区索引字段大小。
         /// </summary>
-        public static readonly int HEAD_FREE_PARTITION_INDEX_SIZE =
-            STANDARD_FORMAT.GetFieldSize(HEADER_AREA_DICTIONARY, "HeadFreePartitionIndex");
+        public static readonly int HEAD_FREE_PARTITION_INDEX_SIZE;
 
-        
-        
         /// <summary>
         /// 空闲分区数量在整个文件中的偏移。
         /// </summary>
-        public static readonly long FREE_PARTITION_COUNT_OFFSET_IN_FILE =
-            HEADER_AREA_OFFSET_IN_FILE + STANDARD_FORMAT.GetFieldOffset(HEADER_AREA_DICTIONARY, "FreePartitionCount");
+        public static readonly long FREE_PARTITION_COUNT_OFFSET_IN_FILE;
 
         /// <summary>
         /// 空闲分区数量字段大小。
         /// </summary>
-        public static readonly int FREE_PARTITION_COUNT_SIZE =
-            STANDARD_FORMAT.GetFieldSize(HEADER_AREA_DICTIONARY, "FreePartitionCount");
-
-
+        public static readonly int FREE_PARTITION_COUNT_SIZE;
 
         /// <summary>
         /// 分区 next 索引字段大小。
         /// </summary>
-        public static readonly int PARTITION_NEXT_INDEX_SIZE =
-            STANDARD_FORMAT.GetFieldSize(PARTITION_AREA_DICTIONARY, "Next");
+        public static readonly int PARTITION_NEXT_INDEX_SIZE;
 
         /// <summary>
         /// 分区有效数据区大小。
         /// </summary>
-        public static readonly int PARTITION_PAYLOAD_SIZE =
-            STANDARD_FORMAT.GetFieldSize(PARTITION_AREA_DICTIONARY, "Partition");
+        public static readonly int PARTITION_PAYLOAD_SIZE;
 
         /// <summary>
         /// 单个分区占用的总字节大小。
         /// </summary>
-        public static readonly int PARTITION_ENTRY_SIZE = PARTITION_NEXT_INDEX_SIZE + PARTITION_PAYLOAD_SIZE;
+        public static readonly int PARTITION_ENTRY_SIZE;
 
         /// <summary>
         /// 分区 next 字段相对于分区开头的偏移。
         /// </summary>
-        private static readonly int _PARTITION_NEXT_OFFSET_IN_PARTITION =
-            STANDARD_FORMAT.GetFieldOffset(PARTITION_AREA_DICTIONARY, "Next");
+        private static readonly int _PARTITION_NEXT_OFFSET_IN_PARTITION;
 
         /// <summary>
         /// 分区有效数据区相对于分区开头的偏移。
         /// </summary>
-        private static readonly int _PARTITION_PAYLOAD_OFFSET_IN_PARTITION =
-            STANDARD_FORMAT.GetFieldOffset(PARTITION_AREA_DICTIONARY, "Partition");
+        private static readonly int _PARTITION_PAYLOAD_OFFSET_IN_PARTITION;
 
-        
-        
-        
-        /// <summary>
-        /// 获取指定局部 chunk 坐标对应的头数据偏移。
-        /// </summary>
-        public static long GetChunkDataOffsetInFile(Vector2I localChunkPosition)
+        static ChunkRegionFileLayout()
         {
-            ChunkRegionPositionProcessor.ValidateLocalChunkPosition(localChunkPosition);
+            if (!ChunkRegionFormat.TryCreate(
+                    new[]
+                    {
+                        FORMAT_AREA_DICTIONARY,
+                        INTRODUCTION_AREA_DICTIONARY,
+                        HEADER_AREA_DICTIONARY,
+                        PARTITION_AREA_DICTIONARY
+                    },
+                    out ChunkRegionFormat standardFormat))
+            {
+                throw new InvalidOperationException("ChunkRegionFileLayout 初始化失败：无法创建标准 ChunkRegion 格式。");
+            }
+
+            STANDARD_FORMAT = standardFormat;
+            FORMAT_AREA_OFFSET_IN_FILE = 0;
+            FORMAT_AREA_SIZE = GetRequiredAreaSize(FORMAT_AREA_DICTIONARY, "FORMAT_AREA_DICTIONARY");
+            INTRODUCTION_AREA_OFFSET_IN_FILE = FORMAT_AREA_OFFSET_IN_FILE + FORMAT_AREA_SIZE;
+            INTRODUCTION_AREA_SIZE = GetRequiredAreaSize(INTRODUCTION_AREA_DICTIONARY, "INTRODUCTION_AREA_DICTIONARY");
+            HEADER_AREA_OFFSET_IN_FILE = INTRODUCTION_AREA_OFFSET_IN_FILE + INTRODUCTION_AREA_SIZE;
+            HEADER_AREA_SIZE = GetRequiredAreaSize(HEADER_AREA_DICTIONARY, "HEADER_AREA_DICTIONARY");
+            CHUNK_DATA_OFFSET_IN_FILE = HEADER_AREA_OFFSET_IN_FILE + GetRequiredFieldOffset(HEADER_AREA_DICTIONARY, "ChunkData");
+            PARTITION_AREA_OFFSET_IN_FILE = HEADER_AREA_OFFSET_IN_FILE + HEADER_AREA_SIZE;
+            CHUNK_DATA_ENTRY_SIZE = GetRequiredFieldSize(HEADER_AREA_DICTIONARY, "ChunkData");
+            HEAD_FREE_PARTITION_INDEX_OFFSET_IN_FILE = HEADER_AREA_OFFSET_IN_FILE + GetRequiredFieldOffset(HEADER_AREA_DICTIONARY, "HeadFreePartitionIndex");
+            HEAD_FREE_PARTITION_INDEX_SIZE = GetRequiredFieldSize(HEADER_AREA_DICTIONARY, "HeadFreePartitionIndex");
+            FREE_PARTITION_COUNT_OFFSET_IN_FILE = HEADER_AREA_OFFSET_IN_FILE + GetRequiredFieldOffset(HEADER_AREA_DICTIONARY, "FreePartitionCount");
+            FREE_PARTITION_COUNT_SIZE = GetRequiredFieldSize(HEADER_AREA_DICTIONARY, "FreePartitionCount");
+            PARTITION_NEXT_INDEX_SIZE = GetRequiredFieldSize(PARTITION_AREA_DICTIONARY, "Next");
+            PARTITION_PAYLOAD_SIZE = GetRequiredFieldSize(PARTITION_AREA_DICTIONARY, "Partition");
+            PARTITION_ENTRY_SIZE = PARTITION_NEXT_INDEX_SIZE + PARTITION_PAYLOAD_SIZE;
+            _PARTITION_NEXT_OFFSET_IN_PARTITION = GetRequiredFieldOffset(PARTITION_AREA_DICTIONARY, "Next");
+            _PARTITION_PAYLOAD_OFFSET_IN_PARTITION = GetRequiredFieldOffset(PARTITION_AREA_DICTIONARY, "Partition");
+        }
+
+        /// <summary>
+        /// 尝试获取指定局部 chunk 坐标对应的头数据偏移。
+        /// </summary>
+        public static bool TryGetChunkDataOffsetInFile(Vector2I localChunkPosition, out long offsetInFile)
+        {
+            offsetInFile = 0;
+            if (!ChunkRegionPositionProcessor.ValidateLocalChunkPosition(localChunkPosition))
+            {
+                return false;
+            }
 
             int localChunkIndex = localChunkPosition.Y * REGION_CHUNK_AXIS + localChunkPosition.X;
-            return CHUNK_DATA_OFFSET_IN_FILE + localChunkIndex * (long)CHUNK_DATA_ENTRY_SIZE;
+            offsetInFile = CHUNK_DATA_OFFSET_IN_FILE + localChunkIndex * (long)CHUNK_DATA_ENTRY_SIZE;
+            return true;
         }
 
         /// <summary>
@@ -275,6 +282,48 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         public static long GetPartitionOffsetInFile(uint partitionIndex)
         {
             return PARTITION_AREA_OFFSET_IN_FILE + partitionIndex * (long)PARTITION_ENTRY_SIZE;
+        }
+
+        /// <summary>
+        /// 获取区域总大小，并在布局初始化失败时直接终止。
+        /// </summary>
+        private static int GetRequiredAreaSize(Dictionary<string, object> areaDictionary, string areaName)
+        {
+            int size = STANDARD_FORMAT.GetAreaSize(areaDictionary);
+            if (size <= 0)
+            {
+                throw new InvalidOperationException($"ChunkRegionFileLayout 初始化失败：{areaName} 的 SIZE 非法。");
+            }
+
+            return size;
+        }
+
+        /// <summary>
+        /// 获取字段偏移，并在布局初始化失败时直接终止。
+        /// </summary>
+        private static int GetRequiredFieldOffset(Dictionary<string, object> areaDictionary, string fieldName)
+        {
+            Dictionary<string, object> fieldDictionary = STANDARD_FORMAT.GetFieldDictionary(areaDictionary, fieldName);
+            if (fieldDictionary == null || !fieldDictionary.TryGetValue("offset", out object offsetValue) || offsetValue is not int offset || offset < 0)
+            {
+                throw new InvalidOperationException($"ChunkRegionFileLayout 初始化失败：字段 {fieldName} 的 offset 非法。");
+            }
+
+            return offset;
+        }
+
+        /// <summary>
+        /// 获取字段大小，并在布局初始化失败时直接终止。
+        /// </summary>
+        private static int GetRequiredFieldSize(Dictionary<string, object> areaDictionary, string fieldName)
+        {
+            Dictionary<string, object> fieldDictionary = STANDARD_FORMAT.GetFieldDictionary(areaDictionary, fieldName);
+            if (fieldDictionary == null || !fieldDictionary.TryGetValue("size", out object sizeValue) || sizeValue is not int size || size <= 0)
+            {
+                throw new InvalidOperationException($"ChunkRegionFileLayout 初始化失败：字段 {fieldName} 的 size 非法。");
+            }
+
+            return size;
         }
     }
 }

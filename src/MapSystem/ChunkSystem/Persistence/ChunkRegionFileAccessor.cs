@@ -52,15 +52,8 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         protected ChunkRegionFileAccessor(string regionFilePath, Vector2I regionPosition, FileStream stream)
         {
-            if (string.IsNullOrWhiteSpace(regionFilePath))
-            {
-                GD.PushError("[ChunkRegionFileAccessor] ctor: regionFilePath 不能为空。");
-            }
-
-            if (stream == null)
-            {
-                GD.PushError("[ChunkRegionFileAccessor] ctor: stream 不能为空。");
-            }
+            if (string.IsNullOrWhiteSpace(regionFilePath)) GD.PushError("[ChunkRegionFileAccessor] ctor: regionFilePath 不能为空。");
+            if (stream == null) GD.PushError("[ChunkRegionFileAccessor] ctor: stream 不能为空。");
 
             _regionFilePath = regionFilePath;
             _regionPosition = regionPosition;
@@ -129,7 +122,9 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         public byte[] ReadFormatAreaBytes()
         {
-            return ReadBytes(_stream, ChunkRegionFileLayout.FORMAT_AREA_OFFSET_IN_FILE, ChunkRegionFileLayout.FORMAT_AREA_SIZE);
+            return TryReadBytes(_stream, ChunkRegionFileLayout.FORMAT_AREA_OFFSET_IN_FILE, ChunkRegionFileLayout.FORMAT_AREA_SIZE, out byte[] formatAreaBytes)
+                ? formatAreaBytes
+                : null;
         }
 
         /// <summary>
@@ -137,7 +132,8 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         public bool IsFormatEqualToStandard()
         {
-            return ChunkRegionFileLayout.STANDARD_FORMAT.TryCheckRegionFormat(ReadFormatAreaBytes(), out _);
+            byte[] formatAreaBytes = ReadFormatAreaBytes();
+            return formatAreaBytes != null && ChunkRegionFileLayout.STANDARD_FORMAT.TryCheckRegionFormat(formatAreaBytes, out _);
         }
 
         /// <summary>
@@ -194,7 +190,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                     });
 
                 // 打开成功并不代表文件可信，还需要确认格式区、介绍区和分区区长度都满足最小约束。
-                if (!TryValidateExistingRegionFile(stream, regionFilePath, out string errorMessage))
+                if (!TryValidateExistingRegionFile(stream, out string errorMessage))
                 {
                     stream.Dispose();
                     stream = null;
@@ -216,7 +212,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// <summary>
         /// 校验已有 region 文件的格式与基本结构。
         /// </summary>
-        private static bool TryValidateExistingRegionFile(FileStream stream, string regionFilePath, out string errorMessage)
+        private static bool TryValidateExistingRegionFile(FileStream stream, out string errorMessage)
         {
             if (stream.Length < ChunkRegionFileLayout.PARTITION_AREA_OFFSET_IN_FILE)
             {
@@ -225,19 +221,31 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
             }
 
             // 标准格式校验放在最前面，这样后面依赖布局常量的读取才有意义。
-            byte[] formatAreaBytes = ReadBytes(
-                stream,
-                ChunkRegionFileLayout.FORMAT_AREA_OFFSET_IN_FILE,
-                ChunkRegionFileLayout.FORMAT_AREA_SIZE);
+            if (!TryReadBytes(
+                    stream,
+                    ChunkRegionFileLayout.FORMAT_AREA_OFFSET_IN_FILE,
+                    ChunkRegionFileLayout.FORMAT_AREA_SIZE,
+                    out byte[] formatAreaBytes))
+            {
+                errorMessage = "格式区域读取失败。";
+                return false;
+            }
+
             if (!ChunkRegionFileLayout.STANDARD_FORMAT.TryCheckRegionFormat(formatAreaBytes, out errorMessage))
             {
                 return false;
             }
 
-            byte[] signatureBytes = ReadBytes(
-                stream,
-                ChunkRegionFileLayout.INTRODUCTION_AREA_OFFSET_IN_FILE,
-                _INTRODUCTION_SIGNATURE_BYTES.Length);
+            if (!TryReadBytes(
+                    stream,
+                    ChunkRegionFileLayout.INTRODUCTION_AREA_OFFSET_IN_FILE,
+                    _INTRODUCTION_SIGNATURE_BYTES.Length,
+                    out byte[] signatureBytes))
+            {
+                errorMessage = "介绍区域签名读取失败。";
+                return false;
+            }
+
             if (!signatureBytes.AsSpan().SequenceEqual(_INTRODUCTION_SIGNATURE_BYTES))
             {
                 errorMessage = "介绍区域签名不匹配。";
@@ -265,22 +273,70 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// <summary>
         /// 从指定文件流中读取固定长度字节。
         /// </summary>
-        internal static byte[] ReadBytes(FileStream stream, long offsetInFile, int byteCount)
+        internal static bool TryReadBytes(FileStream stream, long offsetInFile, int byteCount, out byte[] bytes)
         {
-            byte[] bytes = new byte[byteCount];
-            stream.Position = offsetInFile;
-            stream.ReadExactly(bytes, 0, byteCount);
+            bytes = null;
+            if (stream == null)
+            {
+                GD.PushError("[ChunkRegionFileAccessor] TryReadBytes: stream 不能为空。");
+                return false;
+            }
 
-            return bytes;
+            if (offsetInFile < 0)
+            {
+                GD.PushError($"[ChunkRegionFileAccessor] TryReadBytes: offsetInFile={offsetInFile} 非法。");
+                return false;
+            }
+
+            if (byteCount < 0)
+            {
+                GD.PushError($"[ChunkRegionFileAccessor] TryReadBytes: byteCount={byteCount} 非法。");
+                return false;
+            }
+
+            try
+            {
+                bytes = new byte[byteCount];
+                stream.Position = offsetInFile;
+                stream.ReadExactly(bytes, 0, byteCount);
+                return true;
+            }
+            catch (Exception exception)
+            {
+                bytes = null;
+                GD.PushError($"[ChunkRegionFileAccessor] TryReadBytes: 在偏移 {offsetInFile} 读取 {byteCount} 字节失败: {exception.Message}");
+                return false;
+            }
         }
 
         /// <summary>
         /// 将字节数组写入到指定文件偏移位置。
         /// </summary>
-        internal static void WriteBytes(FileStream stream, long offsetInFile, ReadOnlySpan<byte> bytes)
+        internal static bool TryWriteBytes(FileStream stream, long offsetInFile, ReadOnlySpan<byte> bytes)
         {
-            stream.Position = offsetInFile;
-            stream.Write(bytes);
+            if (stream == null)
+            {
+                GD.PushError("[ChunkRegionFileAccessor] TryWriteBytes: stream 不能为空。");
+                return false;
+            }
+
+            if (offsetInFile < 0)
+            {
+                GD.PushError($"[ChunkRegionFileAccessor] TryWriteBytes: offsetInFile={offsetInFile} 非法。");
+                return false;
+            }
+
+            try
+            {
+                stream.Position = offsetInFile;
+                stream.Write(bytes);
+                return true;
+            }
+            catch (Exception exception)
+            {
+                GD.PushError($"[ChunkRegionFileAccessor] TryWriteBytes: 在偏移 {offsetInFile} 写入 {bytes.Length} 字节失败: {exception.Message}");
+                return false;
+            }
         }
     }
 }

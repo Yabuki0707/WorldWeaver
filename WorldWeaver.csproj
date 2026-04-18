@@ -42,11 +42,11 @@
     <Content Include="addons\PixelShapeSystem\PointsShape\README.md" />
     <Content Include="addons\PixelShapeSystem\README.md" />
     <Content Include="addons\Vector2IExtensions.cs.uid" />
-    <Content Include="assets\StartGrund.tscn" />
     <Content Include="src\CODE_STYLE.md" />
     <Content Include="src\MapSystem\README.md" />
     <Content Include="src\MapSystem\TODO.md" />
     <Content Include="src\PROJECT_STANDARD.md" />
+    <Content Include="StartGrund.tscn" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="addons\PixelShapeSystem\QuadrangleShape\" />

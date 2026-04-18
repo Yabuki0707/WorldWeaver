@@ -12,18 +12,11 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
     /// </summary>
     public sealed class ChunkRegionReader : ChunkRegionFileAccessor
     {
-        /// <summary>
-        /// 仅允许通过 Open 创建读取器实例。
-        /// </summary>
         private ChunkRegionReader(string regionFilePath, Vector2I regionPosition, FileStream stream)
             : base(regionFilePath, regionPosition, stream)
         {
         }
 
-        /// <summary>
-        /// 打开指定 rootPath 下的 region 读取器。
-        /// <para>若文件不存在、路径不匹配或格式校验失败，则返回 null 并输出警告。</para>
-        /// </summary>
         public new static ChunkRegionReader Open(string rootPath, Vector2I regionPosition)
         {
             if (!TryOpenValidatedStream(rootPath, regionPosition, System.IO.FileAccess.Read, out string regionFilePath, out FileStream stream))
@@ -110,13 +103,22 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                     return null;
                 }
 
-                uint nextPartitionIndex = ChunkRegionPartitionOperator.ReadPartitionNextIndex(Stream, currentPartitionIndex);
+                if (!ChunkRegionPartitionOperator.TryReadValidatedNextPartitionIndex(Stream, currentPartitionIndex, out uint nextPartitionIndex))
+                {
+                    GD.PushError("[ChunkRegionReader] ReadChunkCompressedBytes: 读取 chunk 分区链 next 索引失败。");
+                    return null;
+                }
+
                 int currentReadLength = i == partitionCount - 1
                     ? chunkHeaderData.LastPartitionDataLength
                     : ChunkRegionFileLayout.PARTITION_PAYLOAD_SIZE;
-                ChunkRegionPartitionOperator.ReadPartitionPayload(Stream, currentPartitionIndex, currentReadLength)
-                    .AsSpan()
-                    .CopyTo(compressedBytes.AsSpan(copiedLength, currentReadLength));
+                if (!ChunkRegionPartitionOperator.TryReadPartitionPayload(Stream, currentPartitionIndex, currentReadLength, out byte[] payloadBytes))
+                {
+                    GD.PushError("[ChunkRegionReader] ReadChunkCompressedBytes: 读取 chunk 分区 payload 失败。");
+                    return null;
+                }
+
+                payloadBytes.AsSpan().CopyTo(compressedBytes.AsSpan(copiedLength, currentReadLength));
                 copiedLength += currentReadLength;
 
                 if (i == partitionCount - 1)

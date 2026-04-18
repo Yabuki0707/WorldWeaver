@@ -24,32 +24,62 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         private readonly JToken _cachedJsonObject;
 
         /// <summary>
-        /// 使用按顺序排列的区域信息字典构造 ChunkRegion 格式对象。
+        /// 仅允许通过静态工厂方法创建格式对象，避免构造出半合法实例。
         /// </summary>
-        public ChunkRegionFormat(params Dictionary<string, object>[] areaDictionaryList)
+        private ChunkRegionFormat(IReadOnlyList<Dictionary<string, object>> areaDictionaryList, JToken cachedJsonObject)
         {
+            AreaDictionaryList = areaDictionaryList;
+            _cachedJsonObject = cachedJsonObject;
+        }
+
+        /// <summary>
+        /// 尝试根据区域信息字典列表创建格式对象。
+        /// </summary>
+        public static bool TryCreate(Dictionary<string, object>[] areaDictionaryList, out ChunkRegionFormat format)
+        {
+            format = null;
             if (areaDictionaryList == null)
             {
-                GD.PushError("ChunkRegionFormat 构造失败：areaDictionaryList 不能为空。");
-                areaDictionaryList = Array.Empty<Dictionary<string, object>>();
+                GD.PushError("[ChunkRegionFormat] TryCreate: areaDictionaryList 不能为空。");
+                return false;
             }
 
-            if (areaDictionaryList.Length == 0) GD.PushError("ChunkRegionFormat 构造失败：areaDictionaryList 不能为空。");
+            if (areaDictionaryList.Length == 0)
+            {
+                GD.PushError("[ChunkRegionFormat] TryCreate: areaDictionaryList 不能为空。");
+                return false;
+            }
 
             List<Dictionary<string, object>> clonedAreaDictionaryList = new(areaDictionaryList.Length);
-            foreach (Dictionary<string, object> areaDictionary in areaDictionaryList)
+            for (int i = 0; i < areaDictionaryList.Length; i++)
             {
+                Dictionary<string, object> areaDictionary = areaDictionaryList[i];
                 if (areaDictionary == null)
                 {
-                    GD.PushError("ChunkRegionFormat 构造失败：areaDictionaryList 中存在空区域字典。");
-                    continue;
+                    GD.PushError($"[ChunkRegionFormat] TryCreate: areaDictionaryList[{i}] 不能为空。");
+                    return false;
+                }
+
+                if (!TryValidateAreaDictionary(areaDictionary, i, out string errorMessage))
+                {
+                    GD.PushError($"[ChunkRegionFormat] TryCreate: {errorMessage}");
+                    return false;
                 }
 
                 clonedAreaDictionaryList.Add(CloneDictionary(areaDictionary));
             }
 
-            AreaDictionaryList = clonedAreaDictionaryList;
-            _cachedJsonObject = JToken.FromObject(AreaDictionaryList);
+            try
+            {
+                JToken cachedJsonObject = JToken.FromObject(clonedAreaDictionaryList);
+                format = new ChunkRegionFormat(clonedAreaDictionaryList, cachedJsonObject);
+                return true;
+            }
+            catch (Exception exception)
+            {
+                GD.PushError($"[ChunkRegionFormat] TryCreate: 创建缓存 JSON 失败: {exception.Message}");
+                return false;
+            }
         }
 
         /// <summary>
@@ -196,6 +226,65 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
             }
 
             return intValue;
+        }
+
+        /// <summary>
+        /// 校验单个区域字典是否合法。
+        /// </summary>
+        private static bool TryValidateAreaDictionary(Dictionary<string, object> areaDictionary, int areaIndex, out string errorMessage)
+        {
+            if (!areaDictionary.TryGetValue("SIZE", out object sizeValue) || sizeValue is not int size || size < 0)
+            {
+                errorMessage = $"areaDictionaryList[{areaIndex}] 缺少合法的 SIZE 键。";
+                return false;
+            }
+
+            foreach (KeyValuePair<string, object> pair in areaDictionary)
+            {
+                if (string.Equals(pair.Key, "SIZE", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (pair.Value is not Dictionary<string, object> fieldDictionary)
+                {
+                    errorMessage = $"areaDictionaryList[{areaIndex}] 的字段 {pair.Key} 不是合法的属性字典。";
+                    return false;
+                }
+
+                if (!TryValidateFieldDictionary(fieldDictionary, areaIndex, pair.Key, out errorMessage))
+                {
+                    return false;
+                }
+            }
+
+            errorMessage = null;
+            return true;
+        }
+
+        /// <summary>
+        /// 校验单个字段属性字典是否合法。
+        /// </summary>
+        private static bool TryValidateFieldDictionary(
+            Dictionary<string, object> fieldDictionary,
+            int areaIndex,
+            string fieldName,
+            out string errorMessage)
+        {
+            if (!fieldDictionary.TryGetValue("offset", out object offsetValue) || offsetValue is not int offset || offset < 0)
+            {
+                errorMessage = $"areaDictionaryList[{areaIndex}] 的字段 {fieldName} 缺少合法的 offset 属性。";
+                return false;
+            }
+
+            if (!fieldDictionary.TryGetValue("size", out object sizeValue) || sizeValue is not int size || size <= 0)
+            {
+                errorMessage = $"areaDictionaryList[{areaIndex}] 的字段 {fieldName} 缺少合法的 size 属性。";
+                return false;
+            }
+
+            errorMessage = null;
+            return true;
         }
 
         /// <summary>

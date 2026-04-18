@@ -13,29 +13,14 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
     /// </summary>
     public sealed class ChunkRegionFreePartitionChain : IEnumerable<uint>, IDisposable
     {
-        /// <summary>
-        /// 当前空闲分区链绑定的 region 文件流。
-        /// </summary>
         private readonly FileStream _stream;
 
-        /// <summary>
-        /// 当前头状态是否已经同步写回文件。
-        /// </summary>
         public bool IsFlushed { get; private set; }
 
-        /// <summary>
-        /// 当前空闲分区链在内存中的头状态。
-        /// </summary>
         public ChunkRegionHeaderOperator.FreePartitionState FreePartitionState { get; private set; }
 
-        /// <summary>
-        /// 当前空闲分区数量。
-        /// </summary>
         public uint FreePartitionCount => FreePartitionState.FreePartitionCount;
 
-        /// <summary>
-        /// 当前空闲链头分区索引。
-        /// </summary>
         public uint HeadPartitionIndex => FreePartitionState.HeadFreePartitionIndex;
 
         /// <summary>
@@ -49,29 +34,28 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                 return null;
             }
 
-            ChunkRegionFreePartitionChain chain = new(stream);
-            if (!IsFreePartitionStateValid(stream, chain.FreePartitionState))
+            if (!ChunkRegionHeaderOperator.TryReadFreePartitionState(stream, out ChunkRegionHeaderOperator.FreePartitionState freePartitionState))
+            {
+                GD.PushError("[ChunkRegionFreePartitionChain] Create: 读取空闲分区头状态失败。");
+                return null;
+            }
+
+            if (!IsFreePartitionStateValid(stream, freePartitionState))
             {
                 GD.PushError("[ChunkRegionFreePartitionChain] Create: 读取到的空闲分区头状态非法。");
                 return null;
             }
 
-            return chain;
+            return new ChunkRegionFreePartitionChain(stream, freePartitionState);
         }
 
-        /// <summary>
-        /// 仅允许通过 Create 创建实例。
-        /// </summary>
-        private ChunkRegionFreePartitionChain(FileStream stream)
+        private ChunkRegionFreePartitionChain(FileStream stream, ChunkRegionHeaderOperator.FreePartitionState freePartitionState)
         {
             _stream = stream;
-            FreePartitionState = ChunkRegionHeaderOperator.ReadFreePartitionState(stream);
+            FreePartitionState = freePartitionState;
             IsFlushed = true;
         }
 
-        /// <summary>
-        /// 校验指定空闲分区头状态是否满足最基础的头字段约束。
-        /// </summary>
         public static bool IsFreePartitionStateValid(
             FileStream stream,
             ChunkRegionHeaderOperator.FreePartitionState freePartitionState)
@@ -111,14 +95,14 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
             while (true)
             {
                 // 慢指针每轮前进一步，用于与快指针比较是否相遇。
-                if (!ChunkRegionPartitionOperator.TryReadNextPartitionIndex(stream, slowPartitionIndex, out slowPartitionIndex)) return false;
+                if (!ChunkRegionPartitionOperator.TryReadValidatedNextPartitionIndex(stream, slowPartitionIndex, out slowPartitionIndex)) return false;
 
                 // 快指针第一次前进；若此时已经到达链尾，说明当前链可正常结束而非成环。
-                if (!ChunkRegionPartitionOperator.TryReadNextPartitionIndex(stream, fastPartitionIndex, out fastPartitionIndex)) return false;
+                if (!ChunkRegionPartitionOperator.TryReadValidatedNextPartitionIndex(stream, fastPartitionIndex, out fastPartitionIndex)) return false;
                 if (fastPartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL) return false;
 
                 // 快指针第二次前进；依然能走到链尾则说明不是环，若与慢指针相遇则说明成环。
-                if (!ChunkRegionPartitionOperator.TryReadNextPartitionIndex(stream, fastPartitionIndex, out fastPartitionIndex)) return false;
+                if (!ChunkRegionPartitionOperator.TryReadValidatedNextPartitionIndex(stream, fastPartitionIndex, out fastPartitionIndex)) return false;
                 if (fastPartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL) return false;
                 if (slowPartitionIndex == fastPartitionIndex) return true;
             }
@@ -200,10 +184,15 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                 return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
             }
 
+            if (!ChunkRegionPartitionOperator.TryReadValidatedNextPartitionIndex(_stream, currentHeadPartitionIndex, out uint nextHeadPartitionIndex))
+            {
+                GD.PushError("[ChunkRegionFreePartitionChain] TakeHeadPartition: 读取头分区 next 索引失败。");
+                return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
+            }
+
             if (FreePartitionCount == 1)
             {
-                uint lastPartitionNextIndex = ChunkRegionPartitionOperator.ReadPartitionNextIndex(_stream, currentHeadPartitionIndex);
-                if (lastPartitionNextIndex != ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL)
+                if (nextHeadPartitionIndex != ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL)
                 {
                     GD.PushError("[ChunkRegionFreePartitionChain] TakeHeadPartition: 单节点空闲链尾部未写入哨兵值。");
                     return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
@@ -216,16 +205,9 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                 return currentHeadPartitionIndex;
             }
 
-            uint nextHeadPartitionIndex = ChunkRegionPartitionOperator.ReadPartitionNextIndex(_stream, currentHeadPartitionIndex);
             if (nextHeadPartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL)
             {
                 GD.PushError("[ChunkRegionFreePartitionChain] TakeHeadPartition: 空闲分区链在预期数量耗尽前提前结束。");
-                return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
-            }
-
-            if (!ChunkRegionPartitionOperator.IsPartitionIndexInRange(_stream, nextHeadPartitionIndex))
-            {
-                GD.PushError($"[ChunkRegionFreePartitionChain] TakeHeadPartition: 下一头分区索引 {nextHeadPartitionIndex} 超出已分配范围。");
                 return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
             }
 
@@ -287,7 +269,10 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
             BinaryPrimitives.WriteUInt32LittleEndian(nextBytes, nextPartitionIndex);
 
             // 头插只改 next 指针，payload 是否清理不是空闲链职责。
-            ChunkRegionFileAccessor.WriteBytes(stream, ChunkRegionFileLayout.GetPartitionNextOffsetInFile(partitionIndex), nextBytes);
+            if (!ChunkRegionFileAccessor.TryWriteBytes(stream, ChunkRegionFileLayout.GetPartitionNextOffsetInFile(partitionIndex), nextBytes))
+            {
+                return freePartitionState;
+            }
 
             ChunkRegionHeaderOperator.FreePartitionState newFreePartitionState = new(
                 partitionIndex,
@@ -304,17 +289,30 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// <summary>
         /// 将当前内存中的空闲分区头状态写回文件头，并强制冲刷到底层文件。
         /// </summary>
-        public void FlushStateToFile()
+        public bool FlushStateToFile()
         {
             if (!IsFreePartitionStateValid(_stream, FreePartitionState))
             {
                 GD.PushError("[ChunkRegionFreePartitionChain] FlushStateToFile: 当前空闲分区头状态非法，无法写回文件。");
-                return;
+                return false;
             }
 
-            ChunkRegionHeaderOperator.WriteFreePartitionState(_stream, FreePartitionState);
-            _stream.Flush(true);
-            IsFlushed = true;
+            if (!ChunkRegionHeaderOperator.WriteFreePartitionState(_stream, FreePartitionState))
+            {
+                return false;
+            }
+
+            try
+            {
+                _stream.Flush(true);
+                IsFlushed = true;
+                return true;
+            }
+            catch (Exception exception)
+            {
+                GD.PushError($"[ChunkRegionFreePartitionChain] FlushStateToFile: 冲刷文件失败: {exception.Message}");
+                return false;
+            }
         }
 
         /// <summary>
@@ -337,7 +335,12 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                 }
 
                 yield return currentPartitionIndex;
-                currentPartitionIndex = ChunkRegionPartitionOperator.ReadPartitionNextIndex(_stream, currentPartitionIndex);
+                if (!ChunkRegionPartitionOperator.TryReadValidatedNextPartitionIndex(_stream, currentPartitionIndex, out uint nextPartitionIndex))
+                {
+                    yield break;
+                }
+
+                currentPartitionIndex = nextPartitionIndex;
                 if (currentPartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL && i < FreePartitionCount - 1)
                 {
                     yield break;
@@ -345,17 +348,11 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
             }
         }
 
-        /// <summary>
-        /// 非泛型枚举器。
-        /// </summary>
         IEnumerator IEnumerable.GetEnumerator()
         {
             return GetEnumerator();
         }
 
-        /// <summary>
-        /// 若存在未写回的头状态，则在释放时自动写回文件。
-        /// </summary>
         public void Dispose()
         {
             if (!IsFlushed)
