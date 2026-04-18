@@ -52,8 +52,15 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         protected ChunkRegionFileAccessor(string regionFilePath, Vector2I regionPosition, FileStream stream)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(regionFilePath);
-            ArgumentNullException.ThrowIfNull(stream);
+            if (string.IsNullOrWhiteSpace(regionFilePath))
+            {
+                GD.PushError("[ChunkRegionFileAccessor] ctor: regionFilePath 不能为空。");
+            }
+
+            if (stream == null)
+            {
+                GD.PushError("[ChunkRegionFileAccessor] ctor: stream 不能为空。");
+            }
 
             _regionFilePath = regionFilePath;
             _regionPosition = regionPosition;
@@ -97,8 +104,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                 return true;
             }
 
-            ChunkRegionCreater.Create(regionFilePath);
-            return true;
+            return ChunkRegionCreater.Create(regionFilePath);
         }
 
         /// <summary>
@@ -155,6 +161,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
             regionFilePath = null;
             stream = null;
 
+            // 先把逻辑坐标转换成标准路径，后续所有存在性与布局校验都围绕这个标准路径展开。
             if (!ChunkRegionFilePath.TryGetRegionFilePath(rootPath, regionPosition, out regionFilePath))
             {
                 GD.PushWarning($"[ChunkRegionFileAccessor] Open: 无法为 region ({regionPosition.X}, {regionPosition.Y}) 生成有效路径。");
@@ -186,6 +193,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                         Options = FileOptions.RandomAccess
                     });
 
+                // 打开成功并不代表文件可信，还需要确认格式区、介绍区和分区区长度都满足最小约束。
                 if (!TryValidateExistingRegionFile(stream, regionFilePath, out string errorMessage))
                 {
                     stream.Dispose();
@@ -216,6 +224,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                 return false;
             }
 
+            // 标准格式校验放在最前面，这样后面依赖布局常量的读取才有意义。
             byte[] formatAreaBytes = ReadBytes(
                 stream,
                 ChunkRegionFileLayout.FORMAT_AREA_OFFSET_IN_FILE,
@@ -235,6 +244,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                 return false;
             }
 
+            // 分区区域必须按固定分区大小对齐，否则后续任何分区索引换算都会失真。
             long partitionBytesLength = stream.Length - ChunkRegionFileLayout.PARTITION_AREA_OFFSET_IN_FILE;
             if (partitionBytesLength < 0)
             {

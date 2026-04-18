@@ -1,12 +1,13 @@
 using System;
 using System.Buffers.Binary;
 using System.IO;
+using Godot;
 
 namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
 {
     /// <summary>
     /// ChunkRegion 分区操作工具。
-    /// <para>该静态类只负责分区链、分区数据与分区分配相关操作，不持有任何实例状态。</para>
+    /// <para>该静态类只负责分区数据、分区索引与分区容量等基础操作，不持有任何实例状态。</para>
     /// </summary>
     public static class ChunkRegionPartitionOperator
     {
@@ -15,7 +16,12 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         public static uint ReadPartitionNextIndex(FileStream stream, uint partitionIndex)
         {
-            EnsurePartitionIndexInRange(stream, partitionIndex);
+            if (!IsPartitionIndexInRange(stream, partitionIndex))
+            {
+                GD.PushError($"[ChunkRegionPartitionOperator] ReadPartitionNextIndex: 分区索引 {partitionIndex} 超出已分配范围。");
+                return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
+            }
+
             byte[] nextBytes = ChunkRegionFileAccessor.ReadBytes(
                 stream,
                 ChunkRegionFileLayout.GetPartitionNextOffsetInFile(partitionIndex),
@@ -28,71 +34,20 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         public static byte[] ReadPartitionPayload(FileStream stream, uint partitionIndex, int validDataLength)
         {
-            EnsurePartitionIndexInRange(stream, partitionIndex);
+            if (!IsPartitionIndexInRange(stream, partitionIndex))
+            {
+                GD.PushError($"[ChunkRegionPartitionOperator] ReadPartitionPayload: 分区索引 {partitionIndex} 超出已分配范围。");
+                return Array.Empty<byte>();
+            }
+
             if (validDataLength < 0 || validDataLength > ChunkRegionFileLayout.PARTITION_PAYLOAD_SIZE)
             {
-                throw new ArgumentOutOfRangeException(nameof(validDataLength));
+                GD.PushError(
+                    $"[ChunkRegionPartitionOperator] ReadPartitionPayload: validDataLength={validDataLength} 超出有效范围。");
+                return Array.Empty<byte>();
             }
 
             return ChunkRegionFileAccessor.ReadBytes(stream, ChunkRegionFileLayout.GetPartitionPayloadOffsetInFile(partitionIndex), validDataLength);
-        }
-
-        /// <summary>
-        /// 执行空闲分区取出操作。
-        /// </summary>
-        public static uint TakeFreePartition(FileStream stream, ref ChunkRegionHeaderOperator.FreePartitionState freePartitionState)
-        {
-            if (freePartitionState.FreePartitionCount == 0)
-            {
-                throw new InvalidDataException("当前没有可取出的空闲分区。");
-            }
-
-            uint currentHeadIndex = freePartitionState.HeadFreePartitionIndex;
-            EnsurePartitionIndexInRange(stream, currentHeadIndex);
-
-            uint nextFreePartitionIndex = ReadPartitionNextIndex(stream, currentHeadIndex);
-            uint remainingCount = freePartitionState.FreePartitionCount - 1;
-            if (remainingCount == 0)
-            {
-                freePartitionState = new ChunkRegionHeaderOperator.FreePartitionState(
-                    ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL,
-                    0);
-                return currentHeadIndex;
-            }
-
-            if (nextFreePartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL)
-            {
-                throw new InvalidDataException("空闲分区链在预期数量耗尽前提前结束。");
-            }
-
-            EnsurePartitionIndexInRange(stream, nextFreePartitionIndex);
-            freePartitionState = new ChunkRegionHeaderOperator.FreePartitionState(nextFreePartitionIndex, remainingCount);
-            return currentHeadIndex;
-        }
-
-        /// <summary>
-        /// 执行空闲分区注册操作。
-        /// </summary>
-        public static void RegisterFreePartition(
-            FileStream stream,
-            uint partitionIndex,
-            ref ChunkRegionHeaderOperator.FreePartitionState freePartitionState)
-        {
-            EnsurePartitionIndexInRange(stream, partitionIndex);
-            if (freePartitionState.FreePartitionCount > 0)
-            {
-                EnsurePartitionIndexInRange(stream, freePartitionState.HeadFreePartitionIndex);
-            }
-
-            uint nextFreePartitionIndex = freePartitionState.FreePartitionCount == 0
-                ? ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL
-                : freePartitionState.HeadFreePartitionIndex;
-            Span<byte> nextBytes = stackalloc byte[ChunkRegionFileLayout.PARTITION_NEXT_INDEX_SIZE];
-            BinaryPrimitives.WriteUInt32LittleEndian(nextBytes, nextFreePartitionIndex);
-            ChunkRegionFileAccessor.WriteBytes(stream, ChunkRegionFileLayout.GetPartitionNextOffsetInFile(partitionIndex), nextBytes);
-            freePartitionState = new ChunkRegionHeaderOperator.FreePartitionState(
-                partitionIndex,
-                checked(freePartitionState.FreePartitionCount + 1));
         }
 
         /// <summary>
@@ -102,7 +57,8 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         {
             if (partitionCount <= 0)
             {
-                throw new ArgumentOutOfRangeException(nameof(partitionCount));
+                GD.PushError($"[ChunkRegionPartitionOperator] AppendTailPartitions: partitionCount={partitionCount} 非法。");
+                return Array.Empty<uint>();
             }
 
             uint allocatedPartitionCount = GetAllocatedPartitionCount(stream);
@@ -112,6 +68,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                 partitionIndices[i] = allocatedPartitionCount + (uint)i;
             }
 
+            // 这里只扩容文件并预留索引，不在这里初始化内容，真正写入由上层按链路一次性完成。
             long newFileLength = ChunkRegionFileLayout.PARTITION_AREA_OFFSET_IN_FILE +
                 (allocatedPartitionCount + (uint)partitionCount) * ChunkRegionFileLayout.PARTITION_ENTRY_SIZE;
             stream.SetLength(newFileLength);
@@ -123,16 +80,24 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         public static void WritePartition(FileStream stream, uint partitionIndex, uint nextPartitionIndex, ReadOnlySpan<byte> payloadBytes)
         {
-            EnsurePartitionIndexInRange(stream, partitionIndex);
+            if (!IsPartitionIndexInRange(stream, partitionIndex))
+            {
+                GD.PushError($"[ChunkRegionPartitionOperator] WritePartition: 分区索引 {partitionIndex} 超出已分配范围。");
+                return;
+            }
+
             if (payloadBytes.Length <= 0 || payloadBytes.Length > ChunkRegionFileLayout.PARTITION_PAYLOAD_SIZE)
             {
-                throw new ArgumentOutOfRangeException(nameof(payloadBytes));
+                GD.PushError(
+                    $"[ChunkRegionPartitionOperator] WritePartition: payloadBytes.Length={payloadBytes.Length} 超出有效范围。");
+                return;
             }
 
             byte[] partitionBytes = new byte[ChunkRegionFileLayout.PARTITION_ENTRY_SIZE];
             BinaryPrimitives.WriteUInt32LittleEndian(
                 partitionBytes.AsSpan(0, ChunkRegionFileLayout.PARTITION_NEXT_INDEX_SIZE),
                 nextPartitionIndex);
+            // payload 只覆盖有效长度，剩余字节保持为 0，便于最后一个分区只写入部分有效数据。
             payloadBytes.CopyTo(partitionBytes.AsSpan(ChunkRegionFileLayout.PARTITION_NEXT_INDEX_SIZE, payloadBytes.Length));
             ChunkRegionFileAccessor.WriteBytes(stream, ChunkRegionFileLayout.GetPartitionOffsetInFile(partitionIndex), partitionBytes);
         }
@@ -145,12 +110,15 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
             long partitionBytesLength = stream.Length - ChunkRegionFileLayout.PARTITION_AREA_OFFSET_IN_FILE;
             if (partitionBytesLength < 0)
             {
-                throw new InvalidDataException("region 文件长度小于分区区域起始偏移。");
+                GD.PushError("[ChunkRegionPartitionOperator] GetAllocatedPartitionCount: region 文件长度小于分区区域起始偏移。");
+                return 0;
             }
 
+            // 分区数量完全由文件长度反推，因此长度一旦不对齐，所有分区索引计算都会失效。
             if (partitionBytesLength % ChunkRegionFileLayout.PARTITION_ENTRY_SIZE != 0)
             {
-                throw new InvalidDataException("region 文件长度与分区大小不对齐。");
+                GD.PushError("[ChunkRegionPartitionOperator] GetAllocatedPartitionCount: region 文件长度与分区大小不对齐。");
+                return 0;
             }
 
             return checked((uint)(partitionBytesLength / ChunkRegionFileLayout.PARTITION_ENTRY_SIZE));
@@ -159,12 +127,9 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// <summary>
         /// 校验指定分区索引是否处于已分配范围内。
         /// </summary>
-        public static void EnsurePartitionIndexInRange(FileStream stream, uint partitionIndex)
+        public static bool IsPartitionIndexInRange(FileStream stream, uint partitionIndex)
         {
-            if (partitionIndex >= GetAllocatedPartitionCount(stream))
-            {
-                throw new InvalidDataException($"分区索引 {partitionIndex} 超出已分配分区范围。");
-            }
+            return partitionIndex < GetAllocatedPartitionCount(stream);
         }
 
         /// <summary>
@@ -180,7 +145,5 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
             return (dataLength + ChunkRegionFileLayout.PARTITION_PAYLOAD_SIZE - 1) /
                    ChunkRegionFileLayout.PARTITION_PAYLOAD_SIZE;
         }
-
-
     }
 }

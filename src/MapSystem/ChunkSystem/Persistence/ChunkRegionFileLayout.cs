@@ -159,13 +159,15 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// 头数据区域总大小。
         /// </summary>
         public static readonly int HEADER_AREA_SIZE = STANDARD_FORMAT.GetAreaSize(HEADER_AREA_DICTIONARY);
-
+        
         /// <summary>
         /// 区块头数据区域在整个文件中的起始偏移。
         /// </summary>
         public static readonly long CHUNK_DATA_OFFSET_IN_FILE =
             HEADER_AREA_OFFSET_IN_FILE + STANDARD_FORMAT.GetFieldOffset(HEADER_AREA_DICTIONARY, "ChunkData");
 
+        
+        
         /// <summary>
         /// 分区区域在整个文件中的起始偏移。
         /// </summary>
@@ -178,6 +180,8 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         public static readonly int CHUNK_DATA_ENTRY_SIZE =
             STANDARD_FORMAT.GetFieldSize(HEADER_AREA_DICTIONARY, "ChunkData");
 
+        
+        
         /// <summary>
         /// 头空闲分区索引在整个文件中的偏移。
         /// </summary>
@@ -190,6 +194,8 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         public static readonly int HEAD_FREE_PARTITION_INDEX_SIZE =
             STANDARD_FORMAT.GetFieldSize(HEADER_AREA_DICTIONARY, "HeadFreePartitionIndex");
 
+        
+        
         /// <summary>
         /// 空闲分区数量在整个文件中的偏移。
         /// </summary>
@@ -233,16 +239,15 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         private static readonly int _PARTITION_PAYLOAD_OFFSET_IN_PARTITION =
             STANDARD_FORMAT.GetFieldOffset(PARTITION_AREA_DICTIONARY, "Partition");
 
+        
+        
+        
         /// <summary>
         /// 获取指定局部 chunk 坐标对应的头数据偏移。
         /// </summary>
         public static long GetChunkDataOffsetInFile(Vector2I localChunkPosition)
         {
-            if (localChunkPosition.X < 0 || localChunkPosition.X >= REGION_CHUNK_AXIS ||
-                localChunkPosition.Y < 0 || localChunkPosition.Y >= REGION_CHUNK_AXIS)
-            {
-                throw new ArgumentOutOfRangeException(nameof(localChunkPosition));
-            }
+            ChunkRegionPositionProcessor.ValidateLocalChunkPosition(localChunkPosition);
 
             int localChunkIndex = localChunkPosition.Y * REGION_CHUNK_AXIS + localChunkPosition.X;
             return CHUNK_DATA_OFFSET_IN_FILE + localChunkIndex * (long)CHUNK_DATA_ENTRY_SIZE;

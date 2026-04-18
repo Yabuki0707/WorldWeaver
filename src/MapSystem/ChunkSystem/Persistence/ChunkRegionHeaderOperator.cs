@@ -7,7 +7,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
 {
     /// <summary>
     /// ChunkRegion 头数据操作工具。
-    /// <para>该静态类只负责头数据区与空闲分区头状态的读写，不持有任何实例状态。</para>
+    /// <para>该静态类只负责头数据区与空闲分区头字段的基础读写，不持有任何实例状态。</para>
     /// </summary>
     public static class ChunkRegionHeaderOperator
     {
@@ -64,10 +64,14 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// <summary>
         /// 根据局部 chunk 坐标读取头数据。
         /// </summary>
-        public static ChunkHeaderData ReadChunkHeaderData(FileStream stream, Vector2I localChunkPosition)
+        public static ChunkHeaderData? ReadChunkHeaderData(FileStream stream, Vector2I localChunkPosition)
         {
-            ValidateLocalChunkPosition(localChunkPosition);
+            if (!ChunkRegionPositionProcessor.ValidateLocalChunkPosition(localChunkPosition))
+            {
+                return null;
+            }
 
+            // 头数据按固定长度连续布局，读取后直接按既定字段顺序反序列化即可。
             byte[] headerBytes = ChunkRegionFileAccessor.ReadBytes(
                 stream,
                 ChunkRegionFileLayout.GetChunkDataOffsetInFile(localChunkPosition),
@@ -82,11 +86,19 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// <summary>
         /// 根据局部 chunk 坐标覆写头数据。
         /// </summary>
-        public static void WriteChunkHeaderData(FileStream stream, Vector2I localChunkPosition, ChunkHeaderData chunkHeaderData)
+        public static bool WriteChunkHeaderData(FileStream stream, Vector2I localChunkPosition, ChunkHeaderData chunkHeaderData)
         {
-            ValidateLocalChunkPosition(localChunkPosition);
-            ValidateChunkHeaderData(stream, chunkHeaderData);
+            if (!ChunkRegionPositionProcessor.ValidateLocalChunkPosition(localChunkPosition))
+            {
+                return false;
+            }
 
+            if (!ValidateChunkHeaderData(stream, chunkHeaderData))
+            {
+                return false;
+            }
+
+            // 写入前先做完整校验，避免把结构上不可能成立的头记录落盘后污染整个 region。
             Span<byte> headerBytes = stackalloc byte[ChunkRegionFileLayout.CHUNK_DATA_ENTRY_SIZE];
             BinaryPrimitives.WriteUInt32LittleEndian(headerBytes.Slice(0, sizeof(uint)), chunkHeaderData.FirstPartitionIndex);
             BinaryPrimitives.WriteUInt16LittleEndian(headerBytes.Slice(sizeof(uint), sizeof(ushort)), chunkHeaderData.LastPartitionDataLength);
@@ -97,12 +109,13 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                 headerBytes.Slice(sizeof(uint) + sizeof(ushort) + sizeof(uint), sizeof(long)),
                 chunkHeaderData.Timestamp);
             ChunkRegionFileAccessor.WriteBytes(stream, ChunkRegionFileLayout.GetChunkDataOffsetInFile(localChunkPosition), headerBytes);
+            return true;
         }
 
         /// <summary>
         /// 根据局部 chunk 坐标覆写头数据。
         /// </summary>
-        public static void WriteChunkHeaderData(
+        public static bool WriteChunkHeaderData(
             FileStream stream,
             Vector2I localChunkPosition,
             uint firstPartitionIndex,
@@ -110,7 +123,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
             uint partitionCount,
             long timestamp)
         {
-            WriteChunkHeaderData(
+            return WriteChunkHeaderData(
                 stream,
                 localChunkPosition,
                 new ChunkHeaderData(firstPartitionIndex, lastPartitionDataLength, partitionCount, timestamp));
@@ -136,14 +149,10 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
 
         /// <summary>
         /// 写入空闲分区头状态。
+        /// <para>该方法只负责字节写入，不负责状态合法性校验。</para>
         /// </summary>
         public static void WriteFreePartitionState(FileStream stream, FreePartitionState freePartitionState)
         {
-            if (!TryValidateFreePartitionState(stream, freePartitionState))
-            {
-                throw new InvalidDataException("region 文件中的空闲分区头状态非法。");
-            }
-
             Span<byte> stateBytes = stackalloc byte[
                 ChunkRegionFileLayout.HEAD_FREE_PARTITION_INDEX_SIZE + ChunkRegionFileLayout.FREE_PARTITION_COUNT_SIZE];
             BinaryPrimitives.WriteUInt32LittleEndian(
@@ -158,77 +167,49 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// <summary>
         /// 校验头数据是否合理。
         /// </summary>
-        public static void ValidateChunkHeaderData(FileStream stream, ChunkHeaderData chunkHeaderData)
+        public static bool ValidateChunkHeaderData(FileStream stream, ChunkHeaderData chunkHeaderData)
         {
             if (chunkHeaderData.IsEmpty)
             {
-                return;
+                // 空头记录是合法状态，表示该 chunk 目前没有挂任何分区链。
+                return true;
             }
 
             if (chunkHeaderData.FirstPartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL)
             {
-                throw new InvalidDataException("chunk 头数据中的首分区索引非法。");
+                GD.PushError("[ChunkRegionHeaderOperator] ValidateChunkHeaderData: chunk 头数据中的首分区索引非法。");
+                return false;
             }
 
             if (chunkHeaderData.PartitionCount == 0)
             {
-                throw new InvalidDataException("chunk 头数据中的分区数量为 0。");
+                GD.PushError("[ChunkRegionHeaderOperator] ValidateChunkHeaderData: chunk 头数据中的分区数量为 0。");
+                return false;
             }
 
             if (chunkHeaderData.LastPartitionDataLength == 0 ||
                 chunkHeaderData.LastPartitionDataLength > ChunkRegionFileLayout.PARTITION_PAYLOAD_SIZE)
             {
-                throw new InvalidDataException("chunk 头数据中的最后分区有效长度非法。");
+                GD.PushError("[ChunkRegionHeaderOperator] ValidateChunkHeaderData: chunk 头数据中的最后分区有效长度非法。");
+                return false;
             }
 
+            // 这里只校验“能否作为一条可能存在的链”的上界约束，链条本身是否断裂交给读写流程逐步验证。
             uint allocatedPartitionCount = ChunkRegionPartitionOperator.GetAllocatedPartitionCount(stream);
             if (chunkHeaderData.FirstPartitionIndex >= allocatedPartitionCount)
             {
-                throw new InvalidDataException("chunk 头数据中的首分区索引越界。");
+                GD.PushError("[ChunkRegionHeaderOperator] ValidateChunkHeaderData: chunk 头数据中的首分区索引越界。");
+                return false;
             }
 
             if (chunkHeaderData.PartitionCount > allocatedPartitionCount)
             {
-                throw new InvalidDataException("chunk 头数据中的分区数量超过当前已分配分区总数。");
-            }
-        }
-
-        /// <summary>
-        /// 校验空闲分区状态是否合理。
-        /// </summary>
-        public static bool TryValidateFreePartitionState(FileStream stream, FreePartitionState freePartitionState)
-        {
-            uint allocatedPartitionCount = ChunkRegionPartitionOperator.GetAllocatedPartitionCount(stream);
-            if (freePartitionState.FreePartitionCount == 0)
-            {
-                return freePartitionState.HeadFreePartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
-            }
-
-            if (freePartitionState.HeadFreePartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL)
-            {
+                GD.PushError("[ChunkRegionHeaderOperator] ValidateChunkHeaderData: chunk 头数据中的分区数量超过当前已分配分区总数。");
                 return false;
             }
 
-            if (freePartitionState.FreePartitionCount > allocatedPartitionCount)
-            {
-                return false;
-            }
-
-            return freePartitionState.HeadFreePartitionIndex < allocatedPartitionCount;
+            return true;
         }
-
-        /// <summary>
-        /// 校验局部 chunk 坐标是否合法。
-        /// </summary>
-        private static void ValidateLocalChunkPosition(Vector2I localChunkPosition)
-        {
-            if (localChunkPosition.X < 0 || localChunkPosition.X >= ChunkRegionFileLayout.REGION_CHUNK_AXIS ||
-                localChunkPosition.Y < 0 || localChunkPosition.Y >= ChunkRegionFileLayout.REGION_CHUNK_AXIS)
-            {
-                throw new ArgumentOutOfRangeException(nameof(localChunkPosition));
-            }
-        }
-
 
     }
 }

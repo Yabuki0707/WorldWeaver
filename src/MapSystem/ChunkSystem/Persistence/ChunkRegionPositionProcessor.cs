@@ -9,6 +9,22 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
     public static class ChunkRegionPositionProcessor
     {
         /// <summary>
+        /// 校验指定区块在所属 region 内部的局部坐标是否合法。
+        /// </summary>
+        public static bool ValidateLocalChunkPosition(Vector2I localChunkPosition)
+        {
+            if (localChunkPosition.X < 0 || localChunkPosition.X >= ChunkRegionFileLayout.REGION_CHUNK_AXIS ||
+                localChunkPosition.Y < 0 || localChunkPosition.Y >= ChunkRegionFileLayout.REGION_CHUNK_AXIS)
+            {
+                GD.PushError(
+                    $"[ChunkRegionPositionProcessor] ValidateLocalChunkPosition: localChunkPosition=({localChunkPosition.X}, {localChunkPosition.Y}) 超出合法范围。");
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
         /// 拆分指定区块坐标，获取所属 region 坐标与 region 内局部区块坐标。
         /// </summary>
         public static void GetRegionAndLocalChunkPosition(

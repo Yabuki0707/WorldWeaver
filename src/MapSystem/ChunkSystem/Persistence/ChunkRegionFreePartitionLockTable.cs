@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.IO;
 using System.Threading;
+using Godot;
 
 namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
 {
@@ -55,9 +56,19 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         public static void ExecuteLocked(string regionFilePath, Action action)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(regionFilePath);
-            ArgumentNullException.ThrowIfNull(action);
+            if (string.IsNullOrWhiteSpace(regionFilePath))
+            {
+                GD.PushError("[ChunkRegionFreePartitionLockTable] ExecuteLocked: regionFilePath 不能为空。");
+                return;
+            }
 
+            if (action == null)
+            {
+                GD.PushError("[ChunkRegionFreePartitionLockTable] ExecuteLocked: action 不能为空。");
+                return;
+            }
+
+            // 统一先标准化路径，确保同一文件不会因为相对/绝对路径差异拿到不同锁。
             string normalizedRegionFilePath = Path.GetFullPath(regionFilePath);
             RegionLockEntry lockEntry = AcquireLockEntry(normalizedRegionFilePath);
             try
@@ -78,9 +89,19 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         public static T ExecuteLocked<T>(string regionFilePath, Func<T> action)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(regionFilePath);
-            ArgumentNullException.ThrowIfNull(action);
+            if (string.IsNullOrWhiteSpace(regionFilePath))
+            {
+                GD.PushError("[ChunkRegionFreePartitionLockTable] ExecuteLocked<T>: regionFilePath 不能为空。");
+                return default;
+            }
 
+            if (action == null)
+            {
+                GD.PushError("[ChunkRegionFreePartitionLockTable] ExecuteLocked<T>: action 不能为空。");
+                return default;
+            }
+
+            // 泛型版本与无返回值版本共用同一套锁项生命周期，避免两套逻辑演化后不一致。
             string normalizedRegionFilePath = Path.GetFullPath(regionFilePath);
             RegionLockEntry lockEntry = AcquireLockEntry(normalizedRegionFilePath);
             try
@@ -103,6 +124,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         {
             lock (_LOCK_TABLE_GATE)
             {
+                // 锁表增项和引用计数增加必须放在同一门闩内，避免刚创建就被并发线程提前回收。
                 RegionLockEntry lockEntry = _REGION_FREE_PARTITION_LOCKS.GetOrAdd(
                     normalizedRegionFilePath,
                     _ => new RegionLockEntry(new LockReferenceCounter(), new object()));
@@ -123,11 +145,13 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
 
             lock (_LOCK_TABLE_GATE)
             {
+                // 进入门闩前到进入门闩后之间可能有新线程重新持有该锁项，所以需要再次确认引用计数。
                 if (lockEntry.ReferenceCounter.Value != 0)
                 {
                     return;
                 }
 
+                // 只移除仍然指向同一锁对象的表项，避免误删后来为同一路径新建的锁项。
                 if (_REGION_FREE_PARTITION_LOCKS.TryGetValue(normalizedRegionFilePath, out RegionLockEntry currentLockEntry) &&
                     ReferenceEquals(currentLockEntry.LockObject, lockEntry.LockObject))
                 {

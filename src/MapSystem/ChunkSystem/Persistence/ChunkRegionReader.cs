@@ -37,44 +37,54 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// <summary>
         /// 读取指定 chunk 的储存对象。
         /// </summary>
-        public ChunkDataStorage LoadChunkStorage(ChunkPosition chunkPosition)
+        public bool LoadChunkStorage(ChunkPosition chunkPosition, out ChunkDataStorage storage)
         {
+            storage = null;
             ChunkRegionPositionProcessor.GetRegionAndLocalChunkPosition(
                 chunkPosition,
                 out Vector2I regionPosition,
                 out Vector2I localChunkPosition);
+            // 读取器一旦绑定到某个 region，就拒绝跨 region 坐标，避免误读到错误文件中的同索引头记录。
             if (regionPosition != RegionPosition)
             {
-                throw new ArgumentException(
-                    $"chunkPosition {chunkPosition} 不属于当前 region ({RegionPosition.X}, {RegionPosition.Y})。",
-                    nameof(chunkPosition));
+                GD.PushError(
+                    $"[ChunkRegionReader] LoadChunkStorage: chunkPosition {chunkPosition} 不属于当前 region ({RegionPosition.X}, {RegionPosition.Y})。");
+                return false;
             }
 
-            try
+            ChunkRegionHeaderOperator.ChunkHeaderData? chunkHeaderData =
+                ChunkRegionHeaderOperator.ReadChunkHeaderData(Stream, localChunkPosition);
+            if (!chunkHeaderData.HasValue)
             {
-                ChunkRegionHeaderOperator.ChunkHeaderData chunkHeaderData =
-                    ChunkRegionHeaderOperator.ReadChunkHeaderData(Stream, localChunkPosition);
-                ChunkRegionHeaderOperator.ValidateChunkHeaderData(Stream, chunkHeaderData);
-                if (chunkHeaderData.IsEmpty)
-                {
-                    return null;
-                }
-
-                byte[] compressedBytes = ReadChunkCompressedBytes(chunkHeaderData);
-                ChunkDataStorage storage = ChunkDataStorage.FromCompressedBytes(compressedBytes);
-                if (storage == null)
-                {
-                    throw new InvalidDataException("压缩数据无法还原为 ChunkDataStorage。");
-                }
-
-                return storage;
+                return false;
             }
-            catch (InvalidDataException exception)
+
+            if (!ChunkRegionHeaderOperator.ValidateChunkHeaderData(Stream, chunkHeaderData.Value))
             {
-                throw new InvalidDataException(
-                    $"region 文件 {RegionFilePath} 中 chunk {chunkPosition} 读取失败: {exception.Message}",
-                    exception);
+                GD.PushError($"[ChunkRegionReader] LoadChunkStorage: region 文件 {RegionFilePath} 中 chunk {chunkPosition} 头数据非法。");
+                return false;
             }
+
+            if (chunkHeaderData.Value.IsEmpty)
+            {
+                return true;
+            }
+
+            byte[] compressedBytes = ReadChunkCompressedBytes(chunkHeaderData.Value);
+            if (compressedBytes == null)
+            {
+                GD.PushError($"[ChunkRegionReader] LoadChunkStorage: region 文件 {RegionFilePath} 中 chunk {chunkPosition} 分区链读取失败。");
+                return false;
+            }
+
+            storage = ChunkDataStorage.FromCompressedBytes(compressedBytes);
+            if (storage == null)
+            {
+                GD.PushError($"[ChunkRegionReader] LoadChunkStorage: region 文件 {RegionFilePath} 中 chunk {chunkPosition} 压缩数据无法还原为 ChunkDataStorage。");
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>
@@ -83,6 +93,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         private byte[] ReadChunkCompressedBytes(ChunkRegionHeaderOperator.ChunkHeaderData chunkHeaderData)
         {
             int partitionCount = checked((int)chunkHeaderData.PartitionCount);
+            // 总长度由“前 N-1 个满载分区 + 最后一个分区有效长度”推导，避免逐分区累加时重复分配。
             int totalCompressedLength = checked(
                 (partitionCount - 1) * ChunkRegionFileLayout.PARTITION_PAYLOAD_SIZE + chunkHeaderData.LastPartitionDataLength);
             byte[] compressedBytes = new byte[totalCompressedLength];
@@ -92,9 +103,11 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
             HashSet<uint> visitedPartitionIndices = new(partitionCount);
             for (int i = 0; i < partitionCount; i++)
             {
+                // 读链阶段必须主动防环，否则损坏文件会把读取流程卡死在循环分区上。
                 if (!visitedPartitionIndices.Add(currentPartitionIndex))
                 {
-                    throw new InvalidDataException("chunk 分区链存在循环或重复节点。");
+                    GD.PushError("[ChunkRegionReader] ReadChunkCompressedBytes: chunk 分区链存在循环或重复节点。");
+                    return null;
                 }
 
                 uint nextPartitionIndex = ChunkRegionPartitionOperator.ReadPartitionNextIndex(Stream, currentPartitionIndex);
@@ -108,9 +121,11 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
 
                 if (i == partitionCount - 1)
                 {
+                    // 最后一个分区必须以哨兵值结束，否则说明头记录声明的链长度与实际链尾不一致。
                     if (nextPartitionIndex != ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL)
                     {
-                        throw new InvalidDataException("chunk 分区链的最后一个分区未写入哨兵值。");
+                        GD.PushError("[ChunkRegionReader] ReadChunkCompressedBytes: chunk 分区链的最后一个分区未写入哨兵值。");
+                        return null;
                     }
 
                     break;
@@ -118,7 +133,9 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
 
                 if (nextPartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL)
                 {
-                    throw new InvalidDataException("chunk 分区链在中途提前结束。");
+                    // 非最后节点提前遇到哨兵，说明链条比头记录中声明的分区数量更短。
+                    GD.PushError("[ChunkRegionReader] ReadChunkCompressedBytes: chunk 分区链在中途提前结束。");
+                    return null;
                 }
 
                 currentPartitionIndex = nextPartitionIndex;

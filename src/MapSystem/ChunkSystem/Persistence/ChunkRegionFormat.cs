@@ -1,6 +1,7 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
+using Godot;
 using Newtonsoft.Json.Linq;
 
 namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
@@ -27,16 +28,23 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         public ChunkRegionFormat(params Dictionary<string, object>[] areaDictionaryList)
         {
-            ArgumentNullException.ThrowIfNull(areaDictionaryList);
-            if (areaDictionaryList.Length == 0)
+            if (areaDictionaryList == null)
             {
-                throw new ArgumentException("areaDictionaryList 不能为空。", nameof(areaDictionaryList));
+                GD.PushError("ChunkRegionFormat 构造失败：areaDictionaryList 不能为空。");
+                areaDictionaryList = Array.Empty<Dictionary<string, object>>();
             }
+
+            if (areaDictionaryList.Length == 0) GD.PushError("ChunkRegionFormat 构造失败：areaDictionaryList 不能为空。");
 
             List<Dictionary<string, object>> clonedAreaDictionaryList = new(areaDictionaryList.Length);
             foreach (Dictionary<string, object> areaDictionary in areaDictionaryList)
             {
-                ArgumentNullException.ThrowIfNull(areaDictionary);
+                if (areaDictionary == null)
+                {
+                    GD.PushError("ChunkRegionFormat 构造失败：areaDictionaryList 中存在空区域字典。");
+                    continue;
+                }
+
                 clonedAreaDictionaryList.Add(CloneDictionary(areaDictionary));
             }
 
@@ -64,6 +72,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                 validLength--;
             }
 
+            // 格式区域是固定长度保留区，尾部 0 只是填充，参与 JSON 解析反而会制造噪声。
             if (validLength <= 0)
             {
                 errorMessage = "region 格式字节在移除尾部填充后为空。";
@@ -97,15 +106,10 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         public bool TryCheckRegionFormat(byte[] formatBytes, out string errorMessage)
         {
-            if (!TryConvertBytesToJsonObject(formatBytes, out JToken candidateJsonObject, out errorMessage))
-            {
-                return false;
-            }
+            if (!TryConvertBytesToJsonObject(formatBytes, out JToken candidateJsonObject, out errorMessage)) return false;
 
-            if (!TryMatchToken(_cachedJsonObject, candidateJsonObject, "format", out errorMessage))
-            {
-                return false;
-            }
+            // 这里采用“标准格式必须被候选格式完整包含”的规则，允许文件向前兼容地携带额外字段。
+            if (!TryMatchToken(_cachedJsonObject, candidateJsonObject, "format", out errorMessage)) return false;
 
             errorMessage = null;
             return true;
@@ -116,10 +120,16 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         public int GetAreaSize(Dictionary<string, object> areaDictionary)
         {
-            ArgumentNullException.ThrowIfNull(areaDictionary);
+            if (areaDictionary == null)
+            {
+                GD.PushError("获取区域总大小失败：areaDictionary 不能为空。");
+                return 0;
+            }
+
             if (!areaDictionary.TryGetValue("SIZE", out object sizeValue) || sizeValue is not int size)
             {
-                throw new InvalidOperationException("区域字典缺少合法的 SIZE 键。");
+                GD.PushError("获取区域总大小失败：区域字典缺少合法的 SIZE 键。");
+                return 0;
             }
 
             return size;
@@ -130,12 +140,22 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         public Dictionary<string, object> GetFieldDictionary(Dictionary<string, object> areaDictionary, string fieldName)
         {
-            ArgumentNullException.ThrowIfNull(areaDictionary);
-            ArgumentException.ThrowIfNullOrWhiteSpace(fieldName);
+            if (areaDictionary == null)
+            {
+                GD.PushError("获取字段属性字典失败：areaDictionary 不能为空。");
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(fieldName))
+            {
+                GD.PushError("获取字段属性字典失败：fieldName 不能为空。");
+                return null;
+            }
 
             if (!areaDictionary.TryGetValue(fieldName, out object fieldValue) || fieldValue is not Dictionary<string, object> fieldDictionary)
             {
-                throw new InvalidOperationException($"区域字典缺少字段 {fieldName} 的属性字典。");
+                GD.PushError($"获取字段属性字典失败：区域字典缺少字段 {fieldName} 的属性字典。");
+                return null;
             }
 
             return fieldDictionary;
@@ -163,9 +183,16 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         public int GetFieldIntAttribute(Dictionary<string, object> areaDictionary, string fieldName, string attributeName)
         {
             Dictionary<string, object> fieldDictionary = GetFieldDictionary(areaDictionary, fieldName);
+            if (fieldDictionary == null)
+            {
+                GD.PushError($"获取字段 {fieldName} 的 {attributeName} 属性失败：字段属性字典为空。");
+                return 0;
+            }
+
             if (!fieldDictionary.TryGetValue(attributeName, out object attributeValue) || attributeValue is not int intValue)
             {
-                throw new InvalidOperationException($"字段 {fieldName} 缺少合法的 {attributeName} 属性。");
+                GD.PushError($"获取字段 {fieldName} 的 {attributeName} 属性失败：字段缺少合法的 {attributeName} 属性。");
+                return 0;
             }
 
             return intValue;
@@ -199,16 +226,14 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                 JObject candidateObject = (JObject)candidateToken;
                 foreach (JProperty property in standardObject.Properties())
                 {
+                    // 对象比较只要求候选对象覆盖标准对象已有的键，不要求二者完全相同。
                     if (!candidateObject.TryGetValue(property.Name, out JToken candidateValue))
                     {
                         errorMessage = $"{tokenPath} 缺少键 {property.Name}。";
                         return false;
                     }
 
-                    if (!TryMatchToken(property.Value, candidateValue, $"{tokenPath}.{property.Name}", out errorMessage))
-                    {
-                        return false;
-                    }
+                    if (!TryMatchToken(property.Value, candidateValue, $"{tokenPath}.{property.Name}", out errorMessage)) return false;
                 }
 
                 errorMessage = null;
@@ -218,6 +243,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
             if (standardToken is JArray standardArray)
             {
                 JArray candidateArray = (JArray)candidateToken;
+                // 数组顺序直接决定布局语义，因此这里不能像对象那样容忍多余项或乱序。
                 if (standardArray.Count != candidateArray.Count)
                 {
                     errorMessage = $"{tokenPath} 数组长度不匹配，标准长度为 {standardArray.Count}，实际长度为 {candidateArray.Count}。";
@@ -226,10 +252,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
 
                 for (int i = 0; i < standardArray.Count; i++)
                 {
-                    if (!TryMatchToken(standardArray[i], candidateArray[i], $"{tokenPath}[{i}]", out errorMessage))
-                    {
-                        return false;
-                    }
+                    if (!TryMatchToken(standardArray[i], candidateArray[i], $"{tokenPath}[{i}]", out errorMessage)) return false;
                 }
 
                 errorMessage = null;
@@ -251,6 +274,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         private static Dictionary<string, object> CloneDictionary(Dictionary<string, object> sourceDictionary)
         {
+            // 构造时立即深拷贝，避免外部继续修改输入字典后把标准格式对象污染掉。
             Dictionary<string, object> clonedDictionary = new(sourceDictionary.Count, StringComparer.Ordinal);
             foreach (KeyValuePair<string, object> pair in sourceDictionary)
             {
@@ -265,10 +289,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         private static object CloneValue(object value)
         {
-            if (value is Dictionary<string, object> nestedDictionary)
-            {
-                return CloneDictionary(nestedDictionary);
-            }
+            if (value is Dictionary<string, object> nestedDictionary) return CloneDictionary(nestedDictionary);
 
             return value;
         }

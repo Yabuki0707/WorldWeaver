@@ -38,12 +38,12 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// 创建指定路径的 region 文件。
         /// <para>若目标文件已存在，则抛出异常而不是覆盖旧文件。</para>
         /// </summary>
-        public static void Create(string regionFilePath)
+        public static bool Create(string regionFilePath)
         {
             if (string.IsNullOrWhiteSpace(regionFilePath))
             {
                 GD.PushError("[ChunkRegionCreater] Create: regionFilePath 不能为空。");
-                throw new ArgumentException("regionFilePath 不能为空。", nameof(regionFilePath));
+                return false;
             }
 
             string fullRegionFilePath = Path.GetFullPath(regionFilePath);
@@ -51,7 +51,13 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
             {
                 GD.PushError(
                     $"[ChunkRegionCreater] Create: region 文件后缀必须为 {ChunkRegionFileLayout.FILE_EXTENSION}，当前路径为 {fullRegionFilePath}。");
-                throw new InvalidDataException($"region 文件后缀必须为 {ChunkRegionFileLayout.FILE_EXTENSION}。");
+                return false;
+            }
+
+            if (_STANDARD_FORMAT_BYTES == null || _EMPTY_HEADER_AREA_BYTES == null)
+            {
+                GD.PushError("[ChunkRegionCreater] Create: 标准 region 缓存字节无效。");
+                return false;
             }
 
             string regionDirectoryPath = Path.GetDirectoryName(fullRegionFilePath);
@@ -73,6 +79,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                         Options = FileOptions.RandomAccess
                     });
 
+                // 先把文件扩展到分区区开始位置，确保后续各固定区域都能按绝对偏移直接写入。
                 stream.SetLength(ChunkRegionFileLayout.PARTITION_AREA_OFFSET_IN_FILE);
                 WriteBytes(stream, ChunkRegionFileLayout.FORMAT_AREA_OFFSET_IN_FILE, _STANDARD_FORMAT_BYTES);
                 WriteBytes(
@@ -80,12 +87,14 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                     ChunkRegionFileLayout.INTRODUCTION_AREA_OFFSET_IN_FILE,
                     CreateIntroductionAreaBytes(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
                 WriteBytes(stream, ChunkRegionFileLayout.HEADER_AREA_OFFSET_IN_FILE, _EMPTY_HEADER_AREA_BYTES);
+                // 创建流程结束后强制落盘，避免后续打开时读到半初始化状态。
                 stream.Flush(true);
+                return true;
             }
             catch (Exception exception)
             {
                 GD.PushError($"[ChunkRegionCreater] Create: 创建 region 文件 {fullRegionFilePath} 失败: {exception.Message}");
-                throw;
+                return false;
             }
         }
 
@@ -98,9 +107,11 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
             byte[] formatJsonBytes = Encoding.UTF8.GetBytes(formatJsonText);
             if (formatJsonBytes.Length > ChunkRegionFileLayout.FORMAT_AREA_SIZE)
             {
-                throw new InvalidOperationException("标准 ChunkRegion 格式 JSON 超出预留格式区域大小。");
+                GD.PushError("[ChunkRegionCreater] CreateReservedFormatBytes: 标准 ChunkRegion 格式 JSON 超出预留格式区域大小。");
+                return null;
             }
 
+            // 预留区域剩余字节保持为 0，便于后续按固定长度读取后再裁掉尾部填充。
             byte[] reservedFormatBytes = new byte[ChunkRegionFileLayout.FORMAT_AREA_SIZE];
             formatJsonBytes.CopyTo(reservedFormatBytes, 0);
             return reservedFormatBytes;
@@ -114,6 +125,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
             byte[] introductionBytes = new byte[ChunkRegionFileLayout.INTRODUCTION_AREA_SIZE];
             _INTRODUCTION_SIGNATURE_BYTES.CopyTo(introductionBytes, 0);
 
+            // CreateTime 字段的位置来自标准格式描述，而不是写死偏移，避免布局调整后遗漏同步。
             int createTimeOffset = ChunkRegionFileLayout.STANDARD_FORMAT.GetFieldOffset(
                 ChunkRegionFileLayout.INTRODUCTION_AREA_DICTIONARY,
                 "CreateTime");
@@ -134,11 +146,13 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
             byte[] headerAreaBytes = new byte[ChunkRegionFileLayout.HEADER_AREA_SIZE];
             for (int i = 0; i < ChunkRegionFileLayout.REGION_CHUNK_COUNT; i++)
             {
+                // 空头记录统一以首分区索引哨兵值开头，读取时即可快速判定该 chunk 尚未写入。
                 BinaryPrimitives.WriteUInt32LittleEndian(
                     headerAreaBytes.AsSpan(i * ChunkRegionFileLayout.CHUNK_DATA_ENTRY_SIZE, sizeof(uint)),
                     ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL);
             }
 
+            // 空闲分区头状态在新文件中必须显式初始化为空链，避免后续把 0 误判为有效分区索引。
             int headFreePartitionIndexOffset = ChunkRegionFileLayout.STANDARD_FORMAT.GetFieldOffset(
                 ChunkRegionFileLayout.HEADER_AREA_DICTIONARY,
                 "HeadFreePartitionIndex");

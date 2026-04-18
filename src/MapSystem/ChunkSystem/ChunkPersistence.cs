@@ -25,7 +25,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 		/// <summary>
 		/// 最大并发异步任务数量。
 		/// </summary>
-		private const int MAX_CONCURRENT_TASKS = 12;
+		private const int MAX_CONCURRENT_TASKS = 24;
 
 		/// <summary>
 		/// 主线程阻塞式读写的冷却时长。
@@ -196,6 +196,11 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 			try
 			{
 				string regionFilePath = GetRegionFilePath(saveDir, chunk.CPosition, true);
+				if (string.IsNullOrWhiteSpace(regionFilePath))
+				{
+					SetBlockingCooldown(currentTime);
+					return PersistenceRequestResult.PermanentFailure;
+				}
 				PersistenceRequestResult saveResult = ChunkRegionFreePartitionLockTable.ExecuteLocked(regionFilePath, () =>
 				{
 					if (!ChunkRegionFileAccessor.CreateRegion(saveDir, chunk.CPosition))
@@ -211,18 +216,16 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 						return PersistenceRequestResult.PermanentFailure;
 					}
 
-					regionWriter.SaveChunkStorage(chunk.CPosition, storage);
+					if (!regionWriter.SaveChunkStorage(chunk.CPosition, storage))
+					{
+						return PersistenceRequestResult.PermanentFailure;
+					}
+
 					return PersistenceRequestResult.Success;
 				});
 
 				SetBlockingCooldown(currentTime);
 				return saveResult;
-			}
-			catch (InvalidDataException e)
-			{
-				SetBlockingCooldown(currentTime);
-				GD.PushError($"[ChunkPersistence] SaveBlocking: Region 数据非法，区块 {chunk.Uid} 保存失败: {e.Message}");
-				return PersistenceRequestResult.PermanentFailure;
 			}
 			catch (IOException e)
 			{
@@ -264,6 +267,12 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 			try
 			{
 				string regionFilePath = GetRegionFilePath(saveDir, chunk.CPosition, false);
+				if (string.IsNullOrWhiteSpace(regionFilePath))
+				{
+					SetBlockingCooldown(currentTime);
+					return PersistenceRequestResult.PermanentFailure;
+				}
+
 				if (!ChunkRegionFileAccessor.IsRegionFileExists(saveDir, chunk.CPosition))
 				{
 					return PersistenceRequestResult.Success;
@@ -277,16 +286,14 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 					return PersistenceRequestResult.PermanentFailure;
 				}
 
-				storage = regionReader.LoadChunkStorage(chunk.CPosition);
+				if (!regionReader.LoadChunkStorage(chunk.CPosition, out storage))
+				{
+					SetBlockingCooldown(currentTime);
+					return PersistenceRequestResult.PermanentFailure;
+				}
 				PersistenceRequestResult validateResult = ValidateLoadedStorage(storage, ownerLayer.ChunkSize);
 				SetBlockingCooldown(currentTime);
 				return validateResult;
-			}
-			catch (InvalidDataException e)
-			{
-				SetBlockingCooldown(currentTime);
-				GD.PushError($"[ChunkPersistence] LoadBlocking: Region 数据非法，区块 {chunk.Uid} 加载失败: {e.Message}");
-				return PersistenceRequestResult.PermanentFailure;
 			}
 			catch (IOException e)
 			{
@@ -450,18 +457,18 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 						return;
 					}
 
-					ChunkDataStorage storage = regionReader.LoadChunkStorage(chunkPosition);
+					if (!regionReader.LoadChunkStorage(chunkPosition, out ChunkDataStorage storage))
+					{
+						_RESULT_TABLE[resultKey] = new ResultEntry(
+							new LoadTaskResult(PersistenceRequestResult.PermanentFailure, null),
+							Time.GetTicksMsec(),
+							PersistenceOperationType.Load);
+						return;
+					}
+
 					PersistenceRequestResult requestResult = ValidateLoadedStorage(storage, expectedChunkSize);
 					_RESULT_TABLE[resultKey] = new ResultEntry(
 						new LoadTaskResult(requestResult, storage),
-						Time.GetTicksMsec(),
-						PersistenceOperationType.Load);
-				}
-				catch (InvalidDataException e)
-				{
-					GD.PushError($"[ChunkPersistence] 异步加载区块({uid})时检测到非法 Region 数据: {e.Message}");
-					_RESULT_TABLE[resultKey] = new ResultEntry(
-						new LoadTaskResult(PersistenceRequestResult.PermanentFailure, null),
 						Time.GetTicksMsec(),
 						PersistenceOperationType.Load);
 				}
@@ -510,6 +517,15 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 				try
 				{
 					string regionFilePath = GetRegionFilePath(saveDir, chunkPosition, true);
+					if (string.IsNullOrWhiteSpace(regionFilePath))
+					{
+						_RESULT_TABLE[resultKey] = new ResultEntry(
+							PersistenceRequestResult.PermanentFailure,
+							Time.GetTicksMsec(),
+							PersistenceOperationType.Save);
+						return;
+					}
+
 					PersistenceRequestResult saveResult = ChunkRegionFreePartitionLockTable.ExecuteLocked(regionFilePath, () =>
 					{
 						if (!ChunkRegionFileAccessor.CreateRegion(saveDir, chunkPosition))
@@ -523,20 +539,16 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 							return PersistenceRequestResult.PermanentFailure;
 						}
 
-						regionWriter.SaveChunkStorage(chunkPosition, storage);
+						if (!regionWriter.SaveChunkStorage(chunkPosition, storage))
+						{
+							return PersistenceRequestResult.PermanentFailure;
+						}
+
 						return PersistenceRequestResult.Success;
 					});
 
 					_RESULT_TABLE[resultKey] = new ResultEntry(
 						saveResult,
-						Time.GetTicksMsec(),
-						PersistenceOperationType.Save);
-				}
-				catch (InvalidDataException e)
-				{
-					GD.PushError($"[ChunkPersistence] 异步保存区块({uid})时检测到非法 Region 数据: {e.Message}");
-					_RESULT_TABLE[resultKey] = new ResultEntry(
-						PersistenceRequestResult.PermanentFailure,
 						Time.GetTicksMsec(),
 						PersistenceOperationType.Save);
 				}
@@ -614,8 +626,8 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 		{
 			if (!ChunkRegionFilePath.TryGetRegionFilePath(saveDir, chunkPosition, out string regionFilePath))
 			{
-				throw new InvalidOperationException(
-					$"[ChunkPersistence] 无法为区块 {chunkPosition} 生成有效 Region 文件路径。");
+				GD.PushError($"[ChunkPersistence] 无法为区块 {chunkPosition} 生成有效 Region 文件路径。");
+				return null;
 			}
 
 			if (ensureDirectoryExists)
