@@ -4,7 +4,7 @@ using System.IO;
 using System.Threading;
 using Godot;
 
-namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
+namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
 {
     /// <summary>
     /// ChunkRegion 空闲分区锁表。

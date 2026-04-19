@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using Godot;
 
-namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
+namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
 {
     /// <summary>
     /// ChunkRegion 文件布局。
@@ -46,11 +46,11 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         public static readonly Dictionary<string, object> FORMAT_AREA_DICTIONARY = new(StringComparer.Ordinal)
         {
-            ["SIZE"] = 4 * 1024,
+            ["SIZE"] = 2 * 1024,
             ["FormatJson"] = new Dictionary<string, object>(StringComparer.Ordinal)
             {
                 ["offset"] = 0,
-                ["size"] = 4 * 1024
+                ["size"] = 2 * 1024
             }
         };
 
@@ -59,7 +59,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         public static readonly Dictionary<string, object> INTRODUCTION_AREA_DICTIONARY = new(StringComparer.Ordinal)
         {
-            ["SIZE"] = 4 * 1024,
+            ["SIZE"] = 2 * 1024,
             ["Signature"] = new Dictionary<string, object>(StringComparer.Ordinal)
             {
                 ["offset"] = 0,

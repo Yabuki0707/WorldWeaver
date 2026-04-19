@@ -4,7 +4,7 @@ using System.IO;
 using Godot;
 using WorldWeaver.MapSystem.ChunkSystem.Data;
 
-namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
+namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
 {
     /// <summary>
     /// ChunkRegion 写入器。

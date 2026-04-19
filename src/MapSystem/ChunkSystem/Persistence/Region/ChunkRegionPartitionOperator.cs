@@ -3,7 +3,7 @@ using System.Buffers.Binary;
 using System.IO;
 using Godot;
 
-namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
+namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
 {
     /// <summary>
     /// ChunkRegion 分区基础操作工具。

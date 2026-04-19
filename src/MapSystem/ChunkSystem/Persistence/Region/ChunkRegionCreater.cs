@@ -4,7 +4,8 @@ using System.IO;
 using System.Text;
 using Godot;
 using Newtonsoft.Json;
-namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
+
+namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
 {
     /// <summary>
     /// ChunkRegion 文件创建器。

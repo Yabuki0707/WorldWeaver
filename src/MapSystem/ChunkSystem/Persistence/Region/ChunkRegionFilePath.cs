@@ -1,9 +1,8 @@
 using System;
 using System.IO;
 using Godot;
-using WorldWeaver;
 
-namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
+namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
 {
     /// <summary>
     /// ChunkRegion 文件路径工具。

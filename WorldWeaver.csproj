@@ -50,7 +50,7 @@
   </ItemGroup>
   <ItemGroup>
     <Folder Include="addons\PixelShapeSystem\QuadrangleShape\" />
-    <Folder Include="src\MapSystem\ChunkSystem\Persistence\" />
+    <Folder Include="src\MapSystem\ChunkSystem\Persistence\Region\ToolScript\" />
     <Folder Include="src\MapSystem\WorldSystem\" />
   </ItemGroup>
   <ItemGroup>

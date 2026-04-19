@@ -4,7 +4,7 @@ using System.Text;
 using Godot;
 using Newtonsoft.Json.Linq;
 
-namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
+namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
 {
     /// <summary>
     /// ChunkRegion 格式对象。
