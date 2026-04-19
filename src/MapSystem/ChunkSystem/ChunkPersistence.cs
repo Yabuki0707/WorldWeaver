@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -201,28 +201,43 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 					SetBlockingCooldown(currentTime);
 					return PersistenceRequestResult.PermanentFailure;
 				}
-				PersistenceRequestResult saveResult = ChunkRegionFreePartitionLockTable.ExecuteLocked(regionFilePath, () =>
+				PersistenceRequestResult saveResult;
+				bool regionLockEntered = false;
+				try
 				{
+					ChunkRegionFreePartitionLockTable.EnterRegionLock(regionFilePath);
+					regionLockEntered = true;
+
 					if (!ChunkRegionFileAccessor.CreateRegion(saveDir, chunk.CPosition))
 					{
 						GD.PushError($"[ChunkPersistence] SaveBlocking: 无法为 {regionFilePath} 创建 Region 文件。");
-						return PersistenceRequestResult.PermanentFailure;
+						saveResult = PersistenceRequestResult.PermanentFailure;
 					}
-
-					using ChunkRegionWriter regionWriter = OpenRegionWriter(saveDir, chunk.CPosition);
-					if (regionWriter == null)
+					else
 					{
-						GD.PushError($"[ChunkPersistence] SaveBlocking: 无法打开 Region 文件 {regionFilePath}。");
-						return PersistenceRequestResult.PermanentFailure;
+						using ChunkRegionWriter regionWriter = OpenRegionWriter(saveDir, chunk.CPosition);
+						if (regionWriter == null)
+						{
+							GD.PushError($"[ChunkPersistence] SaveBlocking: 无法打开 Region 文件 {regionFilePath}。");
+							saveResult = PersistenceRequestResult.PermanentFailure;
+						}
+						else if (!regionWriter.SaveChunkStorage(chunk.CPosition, storage))
+						{
+							saveResult = PersistenceRequestResult.PermanentFailure;
+						}
+						else
+						{
+							saveResult = PersistenceRequestResult.Success;
+						}
 					}
-
-					if (!regionWriter.SaveChunkStorage(chunk.CPosition, storage))
+				}
+				finally
+				{
+					if (regionLockEntered)
 					{
-						return PersistenceRequestResult.PermanentFailure;
+						ChunkRegionFreePartitionLockTable.ExitRegionLock(regionFilePath);
 					}
-
-					return PersistenceRequestResult.Success;
-				});
+				}
 
 				SetBlockingCooldown(currentTime);
 				return saveResult;
@@ -526,26 +541,41 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 						return;
 					}
 
-					PersistenceRequestResult saveResult = ChunkRegionFreePartitionLockTable.ExecuteLocked(regionFilePath, () =>
+					PersistenceRequestResult saveResult;
+					bool regionLockEntered = false;
+					try
 					{
+						ChunkRegionFreePartitionLockTable.EnterRegionLock(regionFilePath);
+						regionLockEntered = true;
+
 						if (!ChunkRegionFileAccessor.CreateRegion(saveDir, chunkPosition))
 						{
-							return PersistenceRequestResult.PermanentFailure;
+							saveResult = PersistenceRequestResult.PermanentFailure;
 						}
-
-						using ChunkRegionWriter regionWriter = OpenRegionWriter(saveDir, chunkPosition);
-						if (regionWriter == null)
+						else
 						{
-							return PersistenceRequestResult.PermanentFailure;
+							using ChunkRegionWriter regionWriter = OpenRegionWriter(saveDir, chunkPosition);
+							if (regionWriter == null)
+							{
+								saveResult = PersistenceRequestResult.PermanentFailure;
+							}
+							else if (!regionWriter.SaveChunkStorage(chunkPosition, storage))
+							{
+								saveResult = PersistenceRequestResult.PermanentFailure;
+							}
+							else
+							{
+								saveResult = PersistenceRequestResult.Success;
+							}
 						}
-
-						if (!regionWriter.SaveChunkStorage(chunkPosition, storage))
+					}
+					finally
+					{
+						if (regionLockEntered)
 						{
-							return PersistenceRequestResult.PermanentFailure;
+							ChunkRegionFreePartitionLockTable.ExitRegionLock(regionFilePath);
 						}
-
-						return PersistenceRequestResult.Success;
-					});
+					}
 
 					_RESULT_TABLE[resultKey] = new ResultEntry(
 						saveResult,
