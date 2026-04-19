@@ -97,7 +97,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
 				return true;
 			}
 
-			return ChunkRegionCreater.Create(regionFilePath);
+			return ChunkRegionCreator.Create(regionFilePath);
 		}
 
 		/// <summary>

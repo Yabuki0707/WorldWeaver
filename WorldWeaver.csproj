@@ -43,6 +43,7 @@
     <Content Include="addons\PixelShapeSystem\README.md" />
     <Content Include="addons\Vector2IExtensions.cs.uid" />
     <Content Include="src\CODE_STYLE.md" />
+    <Content Include="src\MapSystem\ChunkSystem\Persistence\TODO.md" />
     <Content Include="src\MapSystem\README.md" />
     <Content Include="src\MapSystem\TODO.md" />
     <Content Include="src\PROJECT_STANDARD.md" />

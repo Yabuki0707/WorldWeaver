@@ -11,7 +11,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
     /// ChunkRegion 文件创建器。
     /// <para>该类型只负责生成 region 路径，并按标准布局创建新的 region 文件。</para>
     /// </summary>
-    public static class ChunkRegionCreater
+    public static class ChunkRegionCreator
     {
         /// <summary>
         /// 介绍区域签名的 UTF-8 字节缓存。
@@ -43,7 +43,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
         {
             if (string.IsNullOrWhiteSpace(regionFilePath))
             {
-                GD.PushError("[ChunkRegionCreater] Create: regionFilePath 不能为空。");
+                GD.PushError("[ChunkRegionCreator] Create: regionFilePath 不能为空。");
                 return false;
             }
 
@@ -51,13 +51,13 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
             if (!string.Equals(Path.GetExtension(fullRegionFilePath), ChunkRegionFileLayout.FILE_EXTENSION, StringComparison.OrdinalIgnoreCase))
             {
                 GD.PushError(
-                    $"[ChunkRegionCreater] Create: region 文件后缀必须为 {ChunkRegionFileLayout.FILE_EXTENSION}，当前路径为 {fullRegionFilePath}。");
+                    $"[ChunkRegionCreator] Create: region 文件后缀必须为 {ChunkRegionFileLayout.FILE_EXTENSION}，当前路径为 {fullRegionFilePath}。");
                 return false;
             }
 
             if (_STANDARD_FORMAT_BYTES == null || _EMPTY_HEADER_AREA_BYTES == null)
             {
-                GD.PushError("[ChunkRegionCreater] Create: 标准 region 缓存字节无效。");
+                GD.PushError("[ChunkRegionCreator] Create: 标准 region 缓存字节无效。");
                 return false;
             }
 
@@ -94,7 +94,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
             }
             catch (Exception exception)
             {
-                GD.PushError($"[ChunkRegionCreater] Create: 创建 region 文件 {fullRegionFilePath} 失败: {exception.Message}");
+                GD.PushError($"[ChunkRegionCreator] Create: 创建 region 文件 {fullRegionFilePath} 失败: {exception.Message}");
                 return false;
             }
         }
@@ -108,7 +108,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
             byte[] formatJsonBytes = Encoding.UTF8.GetBytes(formatJsonText);
             if (formatJsonBytes.Length > ChunkRegionFileLayout.FORMAT_AREA_SIZE)
             {
-                GD.PushError("[ChunkRegionCreater] CreateReservedFormatBytes: 标准 ChunkRegion 格式 JSON 超出预留格式区域大小。");
+                GD.PushError("[ChunkRegionCreator] CreateReservedFormatBytes: 标准 ChunkRegion 格式 JSON 超出预留格式区域大小。");
                 return null;
             }
 
