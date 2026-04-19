@@ -7,7 +7,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
 {
 	/// <summary>
 	/// ChunkRegion 文件访问器。
-	/// <para>该类型负责 region 文件级别的创建、存在性检查、打开校验与基础文件属性维护。</para>
+	/// <para>该类型负责 region 文件级别的存在性协调、打开校验与基础文件读写工具。</para>
 	/// </summary>
 	public class ChunkRegionFileAccessor : IDisposable
 	{
@@ -52,8 +52,15 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
 		/// </summary>
 		protected ChunkRegionFileAccessor(string regionFilePath, Vector2I regionPosition, FileStream stream)
 		{
-			if (string.IsNullOrWhiteSpace(regionFilePath)) GD.PushError("[ChunkRegionFileAccessor] ctor: regionFilePath 不能为空。");
-			if (stream == null) GD.PushError("[ChunkRegionFileAccessor] ctor: stream 不能为空。");
+			if (string.IsNullOrWhiteSpace(regionFilePath))
+			{
+				GD.PushError("[ChunkRegionFileAccessor] ctor: regionFilePath 不能为空。");
+			}
+
+			if (stream == null)
+			{
+				GD.PushError("[ChunkRegionFileAccessor] ctor: stream 不能为空。");
+			}
 
 			_regionFilePath = regionFilePath;
 			_regionPosition = regionPosition;
@@ -75,46 +82,51 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
 		}
 
 		/// <summary>
-		/// 创建指定 chunk 所属的 region 文件。
+		/// 确保指定 chunk 所属的 region 文件存在。
+		/// <para>返回值表示本次操作是否成功，<paramref name="alreadyExists"/> 表示调用时文件是否原本存在。</para>
+		/// <para>方法会在 creator 锁内完成“存在性检查 + 必要时创建”，避免多线程下重复创建同一个 region 文件。</para>
 		/// </summary>
-		public static bool CreateRegion(string rootPath, ChunkPosition chunkPosition)
+		public static bool TryEnsureRegionFileExists(string rootPath, ChunkPosition chunkPosition, out bool alreadyExists)
 		{
-			return CreateRegion(rootPath, ChunkRegionPositionProcessor.GetRegionPosition(chunkPosition));
+			return TryEnsureRegionFileExists(rootPath, ChunkRegionPositionProcessor.GetRegionPosition(chunkPosition), out alreadyExists);
 		}
 
 		/// <summary>
-		/// 创建指定 region 坐标对应的 region 文件。
+		/// 确保指定 region 坐标对应的 region 文件存在。
+		/// <para>返回值表示本次操作是否成功，<paramref name="alreadyExists"/> 表示调用时文件是否原本存在。</para>
+		/// <para>方法会在 creator 锁内完成“存在性检查 + 必要时创建”，避免多线程下重复创建同一个 region 文件。</para>
 		/// </summary>
-		public static bool CreateRegion(string rootPath, Vector2I regionPosition)
+		public static bool TryEnsureRegionFileExists(string rootPath, Vector2I regionPosition, out bool alreadyExists)
 		{
+			alreadyExists = false;
 			if (!ChunkRegionFilePath.TryGetRegionFilePath(rootPath, regionPosition, out string regionFilePath))
 			{
+				GD.PushError(
+					$"[ChunkRegionFileAccessor] TryEnsureRegionFileExists: 无法为 region ({regionPosition.X}, {regionPosition.Y}) 生成有效路径。");
 				return false;
 			}
 
-			if (File.Exists(regionFilePath))
+			bool creatorLockEntered = false;
+			try
 			{
-				return true;
+				ChunkRegionCreatorLockTable.EnterRegionLock(regionFilePath);
+				creatorLockEntered = true;
+
+				alreadyExists = File.Exists(regionFilePath);
+				if (alreadyExists)
+				{
+					return true;
+				}
+
+				return ChunkRegionCreator.Create(regionFilePath);
 			}
-
-			return ChunkRegionCreator.Create(regionFilePath);
-		}
-
-		/// <summary>
-		/// 检查指定 chunk 所属的 region 文件是否存在。
-		/// </summary>
-		public static bool IsRegionFileExists(string rootPath, ChunkPosition chunkPosition)
-		{
-			return IsRegionFileExists(rootPath, ChunkRegionPositionProcessor.GetRegionPosition(chunkPosition));
-		}
-
-		/// <summary>
-		/// 检查指定 region 文件是否存在。
-		/// </summary>
-		public static bool IsRegionFileExists(string rootPath, Vector2I regionPosition)
-		{
-			return ChunkRegionFilePath.TryGetRegionFilePath(rootPath, regionPosition, out string regionFilePath) &&
-				   File.Exists(regionFilePath);
+			finally
+			{
+				if (creatorLockEntered)
+				{
+					ChunkRegionCreatorLockTable.ExitRegionLock(regionFilePath);
+				}
+			}
 		}
 
 		/// <summary>
@@ -157,7 +169,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
 			regionFilePath = null;
 			stream = null;
 
-			// 先把逻辑坐标转换成标准路径，后续所有存在性与布局校验都围绕这个标准路径展开。
+			// 先把逻辑坐标转换成标准路径，后续所有存在性与布局校验都围绕这一路径展开。
 			if (!ChunkRegionFilePath.TryGetRegionFilePath(rootPath, regionPosition, out regionFilePath))
 			{
 				GD.PushError($"[ChunkRegionFileAccessor] Open: 无法为 region ({regionPosition.X}, {regionPosition.Y}) 生成有效路径。");

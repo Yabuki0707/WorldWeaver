@@ -13,8 +13,8 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 {
 	/// <summary>
 	/// 区块持久化器。
-	/// <para>该类型负责区块数据的同步读写、异步任务调度与结果回收。</para>
-	/// <para>当前实现基于 ChunkRegion 文件完成阻塞式与异步式持久化。</para>
+	/// <para>该静态类负责区块数据的阻塞式读写、异步任务调度与结果回收。</para>
+	/// <para>当前实现基于 ChunkRegion 文件完成持久化。</para>
 	/// </summary>
 	public static class ChunkPersistence
 	{
@@ -38,7 +38,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 		private const ulong DEFAULT_RESULT_EXPIRATION_MS = 20000;
 
 		/// <summary>
-		/// 在冷却窗口内允许累计的阻塞请求上限。
+		/// 冷却窗口内允许累计的阻塞请求上限。
 		/// </summary>
 		private const int MAX_BLOCKING_REQUESTS_IN_COOLDOWN = 128;
 
@@ -189,7 +189,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 
 			if (!TryCreateChunkDataStorage(chunk.Data, out ChunkDataStorage storage))
 			{
-				GD.PushError($"[ChunkPersistence] SaveBlocking: 区块 {chunk.Uid} 的 ChunkData 无法转换为有效存储对象。");
+				GD.PushError($"[ChunkPersistence] SaveBlocking: 区块 {chunk.Uid} 无法转换为有效的 ChunkDataStorage。");
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
@@ -201,6 +201,14 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 					SetBlockingCooldown(currentTime);
 					return PersistenceRequestResult.PermanentFailure;
 				}
+
+				if (!ChunkRegionFileAccessor.TryEnsureRegionFileExists(saveDir, chunk.CPosition, out _))
+				{
+					SetBlockingCooldown(currentTime);
+					GD.PushError($"[ChunkPersistence] SaveBlocking: 无法确保 Region 文件存在: {regionFilePath}。");
+					return PersistenceRequestResult.PermanentFailure;
+				}
+
 				PersistenceRequestResult saveResult;
 				bool regionLockEntered = false;
 				try
@@ -208,27 +216,19 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 					ChunkRegionFreePartitionLockTable.EnterRegionLock(regionFilePath);
 					regionLockEntered = true;
 
-					if (!ChunkRegionFileAccessor.CreateRegion(saveDir, chunk.CPosition))
+					using ChunkRegionWriter regionWriter = OpenRegionWriter(saveDir, chunk.CPosition);
+					if (regionWriter == null)
 					{
-						GD.PushError($"[ChunkPersistence] SaveBlocking: 无法为 {regionFilePath} 创建 Region 文件。");
+						GD.PushError($"[ChunkPersistence] SaveBlocking: 无法打开 Region 文件 {regionFilePath}。");
+						saveResult = PersistenceRequestResult.PermanentFailure;
+					}
+					else if (!regionWriter.SaveChunkStorage(chunk.CPosition, storage))
+					{
 						saveResult = PersistenceRequestResult.PermanentFailure;
 					}
 					else
 					{
-						using ChunkRegionWriter regionWriter = OpenRegionWriter(saveDir, chunk.CPosition);
-						if (regionWriter == null)
-						{
-							GD.PushError($"[ChunkPersistence] SaveBlocking: 无法打开 Region 文件 {regionFilePath}。");
-							saveResult = PersistenceRequestResult.PermanentFailure;
-						}
-						else if (!regionWriter.SaveChunkStorage(chunk.CPosition, storage))
-						{
-							saveResult = PersistenceRequestResult.PermanentFailure;
-						}
-						else
-						{
-							saveResult = PersistenceRequestResult.Success;
-						}
+						saveResult = PersistenceRequestResult.Success;
 					}
 				}
 				finally
@@ -261,7 +261,6 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 				return PersistenceRequestResult.RetryLater;
 			}
 		}
-
 		/// <summary>
 		/// 以阻塞方式加载区块数据。
 		/// </summary>
@@ -288,8 +287,16 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 					return PersistenceRequestResult.PermanentFailure;
 				}
 
-				if (!ChunkRegionFileAccessor.IsRegionFileExists(saveDir, chunk.CPosition))
+				if (!ChunkRegionFileAccessor.TryEnsureRegionFileExists(saveDir, chunk.CPosition, out bool alreadyExists))
 				{
+					SetBlockingCooldown(currentTime);
+					GD.PushError($"[ChunkPersistence] LoadBlocking: 无法确保 Region 文件存在: {regionFilePath}。");
+					return PersistenceRequestResult.PermanentFailure;
+				}
+
+				if (!alreadyExists)
+				{
+					SetBlockingCooldown(currentTime);
 					return PersistenceRequestResult.Success;
 				}
 
@@ -306,6 +313,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 					SetBlockingCooldown(currentTime);
 					return PersistenceRequestResult.PermanentFailure;
 				}
+
 				PersistenceRequestResult validateResult = ValidateLoadedStorage(storage, ownerLayer.ChunkSize);
 				SetBlockingCooldown(currentTime);
 				return validateResult;
@@ -329,8 +337,6 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 				return PersistenceRequestResult.RetryLater;
 			}
 		}
-
-
 		// ================================================================================
 		//                                  异步接口
 		// ================================================================================
@@ -359,7 +365,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 
 				if (entry.Result is not LoadTaskResult loadResult)
 				{
-					GD.PushError($"[ChunkPersistence] TryLoadAsync: 结果表项 {resultKey} 的数据类型不匹配。");
+					GD.PushError($"[ChunkPersistence] TryLoadAsync: 结果表项 {resultKey} 的结果对象类型不匹配。");
 					return PersistenceRequestResult.PermanentFailure;
 				}
 
@@ -404,7 +410,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 
 				if (entry.Result is not PersistenceRequestResult requestResult)
 				{
-					GD.PushError($"[ChunkPersistence] TrySaveAsync: 结果表项 {resultKey} 的数据类型不匹配。");
+					GD.PushError($"[ChunkPersistence] TrySaveAsync: 结果表项 {resultKey} 的结果对象类型不匹配。");
 					return PersistenceRequestResult.PermanentFailure;
 				}
 
@@ -428,7 +434,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 
 			if (!TryCreateChunkDataStorage(chunk.Data, out ChunkDataStorage storage))
 			{
-				GD.PushError($"[ChunkPersistence] TrySaveAsync: 区块 {chunk.Uid} 的 ChunkData 无法转换为有效存储对象。");
+				GD.PushError($"[ChunkPersistence] TrySaveAsync: 区块 {chunk.Uid} 无法转换为有效的 ChunkDataStorage。");
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
@@ -453,7 +459,16 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 				await _CONCURRENCY_SEMAPHORE.WaitAsync();
 				try
 				{
-					if (!ChunkRegionFileAccessor.IsRegionFileExists(saveDir, chunkPosition))
+					if (!ChunkRegionFileAccessor.TryEnsureRegionFileExists(saveDir, chunkPosition, out bool alreadyExists))
+					{
+						_RESULT_TABLE[resultKey] = new ResultEntry(
+							new LoadTaskResult(PersistenceRequestResult.PermanentFailure, null),
+							Time.GetTicksMsec(),
+							PersistenceOperationType.Load);
+						return;
+					}
+
+					if (!alreadyExists)
 					{
 						_RESULT_TABLE[resultKey] = new ResultEntry(
 							new LoadTaskResult(PersistenceRequestResult.Success, null),
@@ -518,7 +533,6 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 				}
 			});
 		}
-
 		/// <summary>
 		/// 创建异步保存任务。
 		/// </summary>
@@ -541,6 +555,15 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 						return;
 					}
 
+					if (!ChunkRegionFileAccessor.TryEnsureRegionFileExists(saveDir, chunkPosition, out _))
+					{
+						_RESULT_TABLE[resultKey] = new ResultEntry(
+							PersistenceRequestResult.PermanentFailure,
+							Time.GetTicksMsec(),
+							PersistenceOperationType.Save);
+						return;
+					}
+
 					PersistenceRequestResult saveResult;
 					bool regionLockEntered = false;
 					try
@@ -548,25 +571,18 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 						ChunkRegionFreePartitionLockTable.EnterRegionLock(regionFilePath);
 						regionLockEntered = true;
 
-						if (!ChunkRegionFileAccessor.CreateRegion(saveDir, chunkPosition))
+						using ChunkRegionWriter regionWriter = OpenRegionWriter(saveDir, chunkPosition);
+						if (regionWriter == null)
+						{
+							saveResult = PersistenceRequestResult.PermanentFailure;
+						}
+						else if (!regionWriter.SaveChunkStorage(chunkPosition, storage))
 						{
 							saveResult = PersistenceRequestResult.PermanentFailure;
 						}
 						else
 						{
-							using ChunkRegionWriter regionWriter = OpenRegionWriter(saveDir, chunkPosition);
-							if (regionWriter == null)
-							{
-								saveResult = PersistenceRequestResult.PermanentFailure;
-							}
-							else if (!regionWriter.SaveChunkStorage(chunkPosition, storage))
-							{
-								saveResult = PersistenceRequestResult.PermanentFailure;
-							}
-							else
-							{
-								saveResult = PersistenceRequestResult.Success;
-							}
+							saveResult = PersistenceRequestResult.Success;
 						}
 					}
 					finally
@@ -613,8 +629,6 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 				}
 			});
 		}
-
-
 		// ================================================================================
 		//                                  通用工具方法
 		// ================================================================================
@@ -656,7 +670,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 		{
 			if (!ChunkRegionFilePath.TryGetRegionFilePath(saveDir, chunkPosition, out string regionFilePath))
 			{
-				GD.PushError($"[ChunkPersistence] 无法为区块 {chunkPosition} 生成有效 Region 文件路径。");
+				GD.PushError($"[ChunkPersistence] 无法为区块 {chunkPosition} 生成有效的 Region 文件路径。");
 				return null;
 			}
 
@@ -704,7 +718,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 			if (blockingRequestCount == MAX_BLOCKING_REQUESTS_IN_COOLDOWN)
 			{
 				GD.PushError(
-					$"[ChunkPersistence] 冷却窗口内的阻塞式请求次数超过阈值 {MAX_BLOCKING_REQUESTS_IN_COOLDOWN}，当前时间 {currentTime}，区块 {chunkUid}。");
+					$"[ChunkPersistence] 冷却窗口内的阻塞请求数量超过上限 {MAX_BLOCKING_REQUESTS_IN_COOLDOWN}，当前时间 {currentTime}，区块 {chunkUid}。");
 			}
 
 			blockingRequestCount++;
@@ -726,19 +740,19 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 		{
 			if (ownerLayer == null)
 			{
-				GD.PushError($"[ChunkPersistence] {callerName}: ownerLayer 参数不能为 null。");
+				GD.PushError($"[ChunkPersistence] {callerName}: ownerLayer 不能为空。");
 				return false;
 			}
 
 			if (chunk == null)
 			{
-				GD.PushError($"[ChunkPersistence] {callerName}: chunk 参数不能为 null。");
+				GD.PushError($"[ChunkPersistence] {callerName}: chunk 不能为空。");
 				return false;
 			}
 
 			if (chunk == Chunk.EMPTY)
 			{
-				GD.PushError($"[ChunkPersistence] {callerName}: chunk 参数不能为 Empty。");
+				GD.PushError($"[ChunkPersistence] {callerName}: chunk 不能是 Chunk.EMPTY。");
 				return false;
 			}
 
@@ -778,29 +792,26 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 
 			if (!MapElementSize.IsValidExp(storage.WidthExp, storage.HeightExp))
 			{
-				GD.PushError(
-					$"[ChunkPersistence] 已加载的 ChunkDataStorage 尺寸指数非法 ({storage.WidthExp}, {storage.HeightExp})。");
+				GD.PushError($"[ChunkPersistence] 已加载的 ChunkDataStorage 尺寸指数非法。");
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
 			MapElementSize storageSize = new(storage.WidthExp, storage.HeightExp);
 			if (storageSize != expectedChunkSize)
 			{
-				GD.PushError(
-					$"[ChunkPersistence] 已加载的 ChunkDataStorage 尺寸不匹配，期望 {expectedChunkSize}，实际 {storageSize}。");
+				GD.PushError($"[ChunkPersistence] 已加载的 ChunkDataStorage 尺寸与预期区块尺寸不匹配。");
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
 			if (storage.Tiles == null)
 			{
-				GD.PushError("[ChunkPersistence] 已加载的 ChunkDataStorage 的 Tiles 不能为 null。");
+				GD.PushError("[ChunkPersistence] 已加载的 ChunkDataStorage.Tiles 不能为空。");
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
 			if (storage.Tiles.Length != expectedChunkSize.Area)
 			{
-				GD.PushError(
-					$"[ChunkPersistence] 已加载的 ChunkDataStorage 的 Tiles 长度不匹配，期望 {expectedChunkSize.Area}，实际 {storage.Tiles.Length}。");
+				GD.PushError($"[ChunkPersistence] 已加载的 ChunkDataStorage.Tiles 长度与预期面积不匹配。");
 				return PersistenceRequestResult.PermanentFailure;
 			}
 
