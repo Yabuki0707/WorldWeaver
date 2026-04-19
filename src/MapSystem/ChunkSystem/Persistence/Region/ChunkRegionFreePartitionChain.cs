@@ -14,14 +14,79 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
     /// </summary>
     public sealed class ChunkRegionFreePartitionChain : IEnumerable<uint>, IDisposable
     {
+        /// <summary>
+        /// 空闲分区链的写回状态与 region 锁状态。
+        /// <para>该类型负责维护“当前是否已写回”这一状态，并统一处理变脏时加锁、清洁时解锁。</para>
+        /// </summary>
+        private sealed class FlushLockState
+        {
+            private readonly string _regionFilePath;
+
+            /// <summary>
+            /// 当前内存状态是否已经与文件头保持同步。
+            /// </summary>
+            public bool IsFlushed { get; private set; } = true;
+
+            public FlushLockState(string regionFilePath)
+            {
+                _regionFilePath = regionFilePath;
+            }
+
+            /// <summary>
+            /// 在首次进入 dirty 状态时获取 region 锁。
+            /// </summary>
+            public bool TryMarkDirty(string callerName)
+            {
+                if (!IsFlushed)
+                {
+                    return true;
+                }
+
+                try
+                {
+                    ChunkRegionFreePartitionLockTable.EnterRegionLock(_regionFilePath);
+                    IsFlushed = false;
+                    return true;
+                }
+                catch (Exception exception)
+                {
+                    GD.PushError($"[ChunkRegionFreePartitionChain] {callerName}: 获取 region 空闲分区锁失败: {exception.Message}");
+                    return false;
+                }
+            }
+
+            /// <summary>
+            /// 在完成写回后释放 region 锁并回到 clean 状态。
+            /// </summary>
+            public bool TryClean(string callerName)
+            {
+                if (IsFlushed)
+                {
+                    return true;
+                }
+
+                try
+                {
+                    ChunkRegionFreePartitionLockTable.ExitRegionLock(_regionFilePath);
+                    IsFlushed = true;
+                    return true;
+                }
+                catch (Exception exception)
+                {
+                    GD.PushError($"[ChunkRegionFreePartitionChain] {callerName}: 释放 region 空闲分区锁失败: {exception.Message}");
+                    return false;
+                }
+            }
+        }
+
         private readonly FileStream _stream;
-        private readonly string _regionFilePath;
+        private readonly FlushLockState _flushLockState;
 
         /// <summary>
         /// 当前内存中的空闲分区头状态是否已经与文件头保持同步。
         /// <para>当该值为 false 时，表示实例已经进入 region 锁，且仍有待写回的头状态变更。</para>
         /// </summary>
-        public bool IsFlushed { get; private set; } = true;
+        public bool IsFlushed => _flushLockState.IsFlushed;
 
         /// <summary>
         /// 当前内存中的空闲分区头状态快照。
@@ -81,56 +146,8 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
             string regionFilePath)
         {
             _stream = stream;
-            _regionFilePath = regionFilePath;
+            _flushLockState = new FlushLockState(regionFilePath);
             FreePartitionState = freePartitionState;
-        }
-
-        /// <summary>
-        /// 在首次修改头状态前将实例切换为脏状态。
-        /// <para>仅当当前仍为 clean 状态时才真正进入 region 锁，避免重复 Enter 导致锁引用失衡。</para>
-        /// </summary>
-        private bool TryMarkDirty(string callerName)
-        {
-            if (!IsFlushed)
-            {
-                return true;
-            }
-
-            try
-            {
-                ChunkRegionFreePartitionLockTable.EnterRegionLock(_regionFilePath);
-                IsFlushed = false;
-                return true;
-            }
-            catch (Exception exception)
-            {
-                GD.PushError($"[ChunkRegionFreePartitionChain] {callerName}: 获取 region 空闲分区锁失败: {exception.Message}");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// 将实例切换回 clean 状态。
-        /// <para>仅当当前仍为 dirty 状态时才真正退出 region 锁，避免重复 Exit。</para>
-        /// </summary>
-        private bool TryCleanState(string callerName)
-        {
-            if (IsFlushed)
-            {
-                return true;
-            }
-
-            try
-            {
-                ChunkRegionFreePartitionLockTable.ExitRegionLock(_regionFilePath);
-                IsFlushed = true;
-                return true;
-            }
-            catch (Exception exception)
-            {
-                GD.PushError($"[ChunkRegionFreePartitionChain] {callerName}: 释放 region 空闲分区锁失败: {exception.Message}");
-                return false;
-            }
         }
 
         /// <summary>
@@ -226,7 +243,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
                     FreePartitionState = oldFreePartitionState;
                     if (oldIsFlushed)
                     {
-                        TryCleanState(nameof(GetFreePartitionList));
+                        _flushLockState.TryClean(nameof(GetFreePartitionList));
                     }
                     return null;
                 }
@@ -237,7 +254,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
                     FreePartitionState = oldFreePartitionState;
                     if (oldIsFlushed)
                     {
-                        TryCleanState(nameof(GetFreePartitionList));
+                        _flushLockState.TryClean(nameof(GetFreePartitionList));
                     }
                     return null;
                 }
@@ -287,7 +304,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
                     return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
                 }
 
-                if (!TryMarkDirty(nameof(TakeHeadPartition)))
+                if (!_flushLockState.TryMarkDirty(nameof(TakeHeadPartition)))
                 {
                     return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
                 }
@@ -304,7 +321,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
                 return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
             }
 
-            if (!TryMarkDirty(nameof(TakeHeadPartition)))
+            if (!_flushLockState.TryMarkDirty(nameof(TakeHeadPartition)))
             {
                 return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
             }
@@ -321,72 +338,47 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
         /// </summary>
         public ChunkRegionHeaderOperator.FreePartitionState RegisterHeadPartition(uint partitionIndex)
         {
-            if (!TryMarkDirty(nameof(RegisterHeadPartition)))
+            if (!IsFreePartitionStateValid(_stream, FreePartitionState))
+            {
+                GD.PushError("[ChunkRegionFreePartitionChain] RegisterHeadPartition: 当前空闲分区头状态非法。");
+                return FreePartitionState;
+            }
+
+            if (!_flushLockState.TryMarkDirty(nameof(RegisterHeadPartition)))
             {
                 return FreePartitionState;
             }
 
-            ChunkRegionHeaderOperator.FreePartitionState newFreePartitionState =
-                RegisterHeadPartition(_stream, FreePartitionState, partitionIndex);
-            if (newFreePartitionState.HeadFreePartitionIndex != FreePartitionState.HeadFreePartitionIndex ||
-                newFreePartitionState.FreePartitionCount != FreePartitionState.FreePartitionCount)
-            {
-                FreePartitionState = newFreePartitionState;
-            }
-
-            return FreePartitionState;
-        }
-
-        /// <summary>
-        /// 将指定分区注册到指定空闲分区头部状态。
-        /// <para>该静态方法会直接写入分区 next 指针，但不会修改调用方实例的 <see cref="IsFlushed"/>。</para>
-        /// </summary>
-        public static ChunkRegionHeaderOperator.FreePartitionState RegisterHeadPartition(
-            FileStream stream,
-            ChunkRegionHeaderOperator.FreePartitionState freePartitionState,
-            uint partitionIndex)
-        {
-            if (!IsFreePartitionStateValid(stream, freePartitionState))
-            {
-                GD.PushError("[ChunkRegionFreePartitionChain] RegisterHeadPartition: 当前空闲分区头状态非法。");
-                return freePartitionState;
-            }
-
-            if (!ChunkRegionPartitionOperator.IsPartitionIndexInRange(stream, partitionIndex))
+            if (!ChunkRegionPartitionOperator.IsPartitionIndexInRange(_stream, partitionIndex))
             {
                 GD.PushError($"[ChunkRegionFreePartitionChain] RegisterHeadPartition: 分区索引 {partitionIndex} 超出已分配范围。");
-                return freePartitionState;
+                return FreePartitionState;
             }
 
-            if (freePartitionState.FreePartitionCount > 0 &&
-                !ChunkRegionPartitionOperator.IsPartitionIndexInRange(stream, freePartitionState.HeadFreePartitionIndex))
-            {
-                GD.PushError($"[ChunkRegionFreePartitionChain] RegisterHeadPartition: 当前头分区索引 {freePartitionState.HeadFreePartitionIndex} 超出已分配范围。");
-                return freePartitionState;
-            }
-
-            uint nextPartitionIndex = freePartitionState.FreePartitionCount == 0
+            uint nextPartitionIndex = FreePartitionCount == 0
                 ? ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL
-                : freePartitionState.HeadFreePartitionIndex;
+                : HeadPartitionIndex;
             Span<byte> nextBytes = stackalloc byte[ChunkRegionFileLayout.PARTITION_NEXT_INDEX_SIZE];
             BinaryPrimitives.WriteUInt32LittleEndian(nextBytes, nextPartitionIndex);
 
             // 头插只改 next 指针，payload 是否清理不是空闲链职责。
-            if (!ChunkRegionFileAccessor.TryWriteBytes(stream, ChunkRegionFileLayout.GetPartitionNextOffsetInFile(partitionIndex), nextBytes))
+            if (!ChunkRegionFileAccessor.TryWriteBytes(_stream, ChunkRegionFileLayout.GetPartitionNextOffsetInFile(partitionIndex), nextBytes))
             {
-                return freePartitionState;
+                GD.PushError($"[ChunkRegionFreePartitionChain] RegisterHeadPartition: 写入分区 {partitionIndex} 的 next 指针失败。");
+                return FreePartitionState;
             }
 
             ChunkRegionHeaderOperator.FreePartitionState newFreePartitionState = new(
                 partitionIndex,
-                checked(freePartitionState.FreePartitionCount + 1));
-            if (!IsFreePartitionStateValid(stream, newFreePartitionState))
+                checked(FreePartitionCount + 1));
+            if (!IsFreePartitionStateValid(_stream, newFreePartitionState))
             {
                 GD.PushError("[ChunkRegionFreePartitionChain] RegisterHeadPartition: 注册后的空闲分区头状态非法。");
-                return freePartitionState;
+                return FreePartitionState;
             }
 
-            return newFreePartitionState;
+            FreePartitionState = newFreePartitionState;
+            return FreePartitionState;
         }
 
         /// <summary>
@@ -421,7 +413,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
                 return false;
             }
 
-            return TryCleanState(nameof(FlushStateToFile));
+            return _flushLockState.TryClean(nameof(FlushStateToFile));
         }
 
         /// <summary>
@@ -482,7 +474,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
             }
 
             GD.PushError("[ChunkRegionFreePartitionChain] Dispose: 写回空闲分区头状态失败，将直接执行 clean 流程以避免锁泄漏。");
-            TryCleanState(nameof(Dispose));
+            _flushLockState.TryClean(nameof(Dispose));
         }
     }
 }
