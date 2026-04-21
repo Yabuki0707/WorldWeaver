@@ -5,6 +5,7 @@ using WorldWeaver.MapSystem.ChunkSystem.State;
 using WorldWeaver.MapSystem.LayerSystem;
 using WorldWeaver.MapSystem.TileSystem;
 using WorldWeaver.PixelShapeSystem.PointsShape;
+using WorldWeaver.PixelShapeSystem.QuadrangleShape;
 using WorldWeaver.PixelShapeSystem.ValueShape;
 
 
@@ -29,7 +30,18 @@ public partial class Sber : Node2D
 	/// 请求矩形的半径。
 	/// <para>当前固定为 2，对应总范围 5x5 区块。</para>
 	/// </summary>
-	private const int REQUEST_HALF_EXTENT = 7;
+	private const int REQUEST_HALF_EXTENT = 14;
+
+	/// <summary>
+	/// 鼠标右键改地形时的 tile 半径。
+	/// <para>当前固定为 2，对应总范围 5x5 tile。</para>
+	/// </summary>
+	private const int RIGHT_CLICK_TILE_HALF_EXTENT = 2;
+
+	/// <summary>
+	/// 右键写入使用的 TileType 名称。
+	/// </summary>
+	private const string DEEP_SEA_TILE_TYPE_NAME = "deep_sea";
 
 
 	// ================================================================================
@@ -75,6 +87,12 @@ public partial class Sber : Node2D
 	/// </summary>
 	private bool _wasEPressed;
 
+	/// <summary>
+	/// deep_sea 的运行时 TileRunId 缓存。
+	/// <para>为 0 表示当前未解析成功。</para>
+	/// </summary>
+	private int _deepSeaTileRunId;
+
 
 	// ================================================================================
 	//                                  生命周期方法
@@ -110,6 +128,11 @@ public partial class Sber : Node2D
 		}
 
 		TileTypeManager.Initialize();
+		_deepSeaTileRunId = TileTypeManager.GetRunIdByName(DEEP_SEA_TILE_TYPE_NAME);
+		if (_deepSeaTileRunId <= 0)
+		{
+			GD.PushWarning($"[Sber] 未找到 TileType '{DEEP_SEA_TILE_TYPE_NAME}'，右键改深海功能将不可用。");
+		}
 	}
 
 	/// <summary>
@@ -143,6 +166,7 @@ public partial class Sber : Node2D
 	/// <summary>
 	/// 处理鼠标点击输入。
 	/// <para>左键点击时，读取鼠标所在世界坐标，换算为区块坐标并生成一个区块标记。</para>
+	/// <para>右键点击时，以鼠标所在 tile 为中心，将 5x5 范围内的 tile 直接改为 deep_sea。</para>
 	/// </summary>
 	public override void _UnhandledInput(InputEvent @event)
 	{
@@ -151,12 +175,21 @@ public partial class Sber : Node2D
 			return;
 		}
 
-		if (!mouseButtonEvent.Pressed || mouseButtonEvent.ButtonIndex != MouseButton.Left)
+		if (!mouseButtonEvent.Pressed)
 		{
 			return;
 		}
 
-		SpawnChunkMarkerAtMousePosition();
+		if (mouseButtonEvent.ButtonIndex == MouseButton.Left)
+		{
+			SpawnChunkMarkerAtMousePosition();
+			return;
+		}
+
+		if (mouseButtonEvent.ButtonIndex == MouseButton.Right)
+		{
+			PaintDeepSeaAtMousePosition();
+		}
 	}
 
 	/// <summary>
@@ -247,6 +280,36 @@ public partial class Sber : Node2D
 		chunkMarkerInstance.Set("chunk_position", chunkPosition.ToVector2I());
 		_ownerMapLayer.AddChild(chunkMarkerInstance);
 		PrintChunkStateSnapshot(chunkPosition);
+	}
+
+	/// <summary>
+	/// 以鼠标当前所在 tile 为中心，将 5x5 范围内的 tile 直接改为 deep_sea。
+	/// </summary>
+	private void PaintDeepSeaAtMousePosition()
+	{
+		if (_ownerMapLayer?.TheChunkManager?.DataOperator == null)
+		{
+			GD.PushWarning("[Sber] 当前未绑定可用的 ChunkManager.DataOperator，无法执行右键改深海。");
+			return;
+		}
+
+		if (_deepSeaTileRunId <= 0)
+		{
+			GD.PushWarning($"[Sber] 当前未解析到 TileType '{DEEP_SEA_TILE_TYPE_NAME}'，无法执行右键改深海。");
+			return;
+		}
+
+		Vector2 mouseGlobalPosition = GetGlobalMousePosition();
+		Vector2I mouseGlobalTilePosition = ConvertGlobalPixelPositionToGlobalTilePosition(mouseGlobalPosition);
+		Vector2I rectangleOrigin = new(
+			mouseGlobalTilePosition.X - RIGHT_CLICK_TILE_HALF_EXTENT,
+			mouseGlobalTilePosition.Y - RIGHT_CLICK_TILE_HALF_EXTENT);
+		RectangleShape rectangleShape = new(
+			RIGHT_CLICK_TILE_HALF_EXTENT * 2 + 1,
+			RIGHT_CLICK_TILE_HALF_EXTENT * 2 + 1,
+			rectangleOrigin);
+
+		_ownerMapLayer.TheChunkManager.DataOperator.SetTiles(new TileRegion(rectangleShape, _deepSeaTileRunId));
 	}
 
 	/// <summary>
