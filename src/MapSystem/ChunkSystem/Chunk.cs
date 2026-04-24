@@ -60,7 +60,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
 
         /// <summary>
         /// 空区块实例（空对象模式）。
-        /// <para>判断一个区块是否为空区块，请使用 <c>chunk == Chunk.Empty</c>。</para>
+        /// <para>判断一个区块是否为空区块，请使用 <c>Chunk.IsNullOrEmpty(chunk)</c>。</para>
         /// </summary>
         public static readonly Chunk EMPTY = new();
 
@@ -130,6 +130,15 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         {
             // 统一复用实例判断，避免外部重复拼空值条件。
             return chunk != null && chunk.IsStructurallyEmpty();
+        }
+
+        /// <summary>
+        /// 判断指定区块是否为 null 或空区块实例。
+        /// </summary>
+        public static bool IsNullOrEmpty(Chunk chunk)
+        {
+            // 统一收拢 null 与空对象模式判断，避免外部重复书写两段条件。
+            return chunk == null || chunk == EMPTY;
         }
 
         /// <summary>

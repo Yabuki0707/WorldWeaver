@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using Godot;
 using WorldWeaver.MapSystem.ChunkSystem.Data;
+using WorldWeaver.MapSystem.ChunkSystem.Persistence.Region.InfoOperator;
 
 namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
 {

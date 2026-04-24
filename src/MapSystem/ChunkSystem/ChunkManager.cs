@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using WorldWeaver.MapSystem.ChunkSystem.Data;
 using WorldWeaver.MapSystem.ChunkSystem.Handler;
+using WorldWeaver.MapSystem.ChunkSystem.Persistence;
 using WorldWeaver.MapSystem.ChunkSystem.State;
 using WorldWeaver.MapSystem.LayerSystem;
 using WorldWeaver.MapSystem.TileSystem;
@@ -142,6 +143,12 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         /// </summary>
         public ChunkLoadRequestProcessor LoadRequestProcessor { get; }
 
+        /// <summary>
+        /// 区块持久化缓存器。
+        /// <para>负责缓存区块储存信息、调度待办任务、回收异步任务结果与执行延迟储存。</para>
+        /// </summary>
+        public ChunkPersistenceCache PersistenceCache { get; }
+
 
         /*******************************
                   构造
@@ -157,6 +164,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
             _chunks = new Dictionary<long, Chunk>(128);
             DataOperator = new ChunkDataOperator(this);
             LoadRequestProcessor = new ChunkLoadRequestProcessor();
+            PersistenceCache = new ChunkPersistenceCache(owner);
         }
 
 
@@ -257,6 +265,9 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         /// </summary>
         public void Update()
         {
+            // 缓存器 tick 必须独立于当前是否存在活跃 chunk，否则延迟储存任务在区块被移除后无法继续推进。
+            PersistenceCache.Update();
+
             // 当更新表为空且当前也没有任何区块时，本轮没有可推进对象。
             if (LoadRequestProcessor.UpdateTable.IsEmpty && _chunks.Count == 0)
             {

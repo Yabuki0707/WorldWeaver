@@ -25,32 +25,26 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
         /// <summary>正在加载于内存</summary>
         LoadingInMemory = 3,
 
-        /// <summary>正在读取信息（同步）</summary>
+        /// <summary>正在读取信息</summary>
         ReadingInformation = 4,
 
-        /// <summary>正在读取信息（异步）</summary>
-        ReadingInformationInThread = 5,
-
         /// <summary>已加载于内存（Level 0）</summary>
-        LoadedInMemory = 6,
+        LoadedInMemory = 5,
 
         /// <summary>正在删除出内存</summary>
-        DeletingFromMemory = 7,
+        DeletingFromMemory = 6,
 
-        /// <summary>正在保存信息（同步）</summary>
-        SavingInformation = 8,
-
-        /// <summary>正在保存信息（异步）</summary>
-        SavingInformationInThread = 9,
+        /// <summary>正在保存信息</summary>
+        SavingInformation = 7,
 
         /// <summary>正在加载于游戏</summary>
-        LoadingInGame = 10,
+        LoadingInGame = 8,
 
         /// <summary>正在卸载于游戏</summary>
-        DeletingFromGame = 11,
+        DeletingFromGame = 9,
 
         /// <summary>已加载于游戏（Level 1）</summary>
-        LoadedInGame = 12,
+        LoadedInGame = 10,
 
     }
     
@@ -112,7 +106,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
             new ChunkStateNodeInfo
             {
                 Node = ChunkStateNode.NotInMemory,
-                ValidTransitions = [ChunkStateNode.Exit, ChunkStateNode.ReadingInformation, ChunkStateNode.ReadingInformationInThread],
+                ValidTransitions = [ChunkStateNode.Exit, ChunkStateNode.ReadingInformation],
                 Priority = 1+DistancePriorityWeightRatio,
                 IsStable = true,
                 Description = "不在内存",
@@ -138,27 +132,17 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
                 Description = "正在读取信息",
                 Handler = new ReadingInformationHandler()
             },
-            // 5: ReadingInformationInThread
-            new ChunkStateNodeInfo
-            {
-                Node = ChunkStateNode.ReadingInformationInThread,
-                ValidTransitions = [ChunkStateNode.LoadingInMemory],
-                Priority = 1+2*DistancePriorityWeightRatio,
-                IsStable = false,
-                Description = "正在线程读取信息",
-                Handler = new ReadingInformationInThreadHandler()
-            },
-            // 6: LoadedInMemory
+            // 5: LoadedInMemory
             new ChunkStateNodeInfo
             {
                 Node = ChunkStateNode.LoadedInMemory,
-                ValidTransitions = [ChunkStateNode.SavingInformation, ChunkStateNode.SavingInformationInThread, ChunkStateNode.LoadingInGame],
+                ValidTransitions = [ChunkStateNode.SavingInformation, ChunkStateNode.LoadingInGame],
                 Priority = 0,
                 IsStable = true,
                 Description = "已加载到内存",
                 Handler = null
             },
-            // 7: DeletingFromMemory
+            // 6: DeletingFromMemory
             new ChunkStateNodeInfo
             {
                 Node = ChunkStateNode.DeletingFromMemory,
@@ -168,27 +152,17 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
                 Description = "正在删除出内存",
                 Handler = new DeletingFromMemoryHandler()
             },
-            // 8: SavingInformation
+            // 7: SavingInformation
             new ChunkStateNodeInfo
             {
                 Node = ChunkStateNode.SavingInformation,
                 ValidTransitions = [ChunkStateNode.DeletingFromMemory],
                 Priority = 1+DistancePriorityWeightRatio,
                 IsStable = false,
-                Description = "正在保存信息",
+                Description = "正在提交储存信息到缓存",
                 Handler = new SavingInformationHandler()
             },
-            // 9: SavingInformationInThread
-            new ChunkStateNodeInfo
-            {
-                Node = ChunkStateNode.SavingInformationInThread,
-                ValidTransitions = [ChunkStateNode.DeletingFromMemory],
-                Priority = 1+2*DistancePriorityWeightRatio,
-                IsStable = false,
-                Description = "正在线程保存信息",
-                Handler = new SavingInformationInThreadHandler()
-            },
-            // 10: LoadingInGame
+            // 8: LoadingInGame
             new ChunkStateNodeInfo
             {
                 Node = ChunkStateNode.LoadingInGame,
@@ -198,7 +172,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
                 Description = "正在加载于游戏",
                 Handler = new LoadingInGameHandler()
             },
-            // 11: DeletingFromGame
+            // 9: DeletingFromGame
             new ChunkStateNodeInfo
             {
                 Node = ChunkStateNode.DeletingFromGame,
@@ -208,7 +182,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.State
                 Description = "正在卸载于游戏",
                 Handler = new DeletingFromGameHandler()
             },
-            // 12: LoadedInGame
+            // 10: LoadedInGame
             new ChunkStateNodeInfo
             {
                 Node = ChunkStateNode.LoadedInGame,

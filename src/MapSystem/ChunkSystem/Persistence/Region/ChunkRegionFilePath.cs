@@ -101,7 +101,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
         /// </summary>
         private static string GetExpectedRegionFileName(Vector2I regionPosition)
         {
-            return $"{regionPosition.ToKey()}{ChunkRegionFileLayout.FILE_EXTENSION}";
+            return $"{ChunkRegionPositionProcessor.ToRegionKey(regionPosition)}{ChunkRegionFileLayout.FILE_EXTENSION}";
         }
     }
 }

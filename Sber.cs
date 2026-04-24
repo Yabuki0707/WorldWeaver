@@ -30,7 +30,7 @@ public partial class Sber : Node2D
 	/// 请求矩形的半径。
 	/// <para>当前固定为 2，对应总范围 5x5 区块。</para>
 	/// </summary>
-	private const int REQUEST_HALF_EXTENT = 14;
+	private const int REQUEST_HALF_EXTENT = 10;
 
 	/// <summary>
 	/// 鼠标右键改地形时的 tile 半径。

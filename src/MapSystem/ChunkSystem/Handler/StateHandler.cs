@@ -49,15 +49,9 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Handler
                 return false;
             }
 
-            if (chunk == null)
+            if (Chunk.IsNullOrEmpty(chunk))
             {
-                GD.PushError($"[{handlerName}] 执行失败：chunk 为 null。");
-                return false;
-            }
-
-            if (chunk == Chunk.EMPTY)
-            {
-                GD.PushError($"[{handlerName}] 执行失败：chunk 为 Empty。");
+                GD.PushError($"[{handlerName}] 执行失败：chunk 为 null 或 Empty。");
                 return false;
             }
 

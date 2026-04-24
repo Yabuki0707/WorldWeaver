@@ -58,7 +58,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Data
                     // 根据缓存相对索引还原真实区块坐标。
                     ChunkPosition chunkPosition = new(MinChunkPosition.X + rangeX, MinChunkPosition.Y + rangeY);
                     Chunk chunk = owner.GetChunk(chunkPosition);
-                    if (chunk == null || chunk == Chunk.EMPTY || chunk.Data == null)
+                    if (Chunk.IsNullOrEmpty(chunk) || chunk.Data == null)
                     {
                         continue;
                     }

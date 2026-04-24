@@ -1,10 +1,11 @@
 using WorldWeaver.MapSystem.ChunkSystem.Data;
+using WorldWeaver.MapSystem.ChunkSystem.Persistence;
 
 namespace WorldWeaver.MapSystem.ChunkSystem.Handler
 {
     /// <summary>
-    /// 正在读取信息状态处理器（同步）。
-    /// <para>负责在主线程中阻塞式读取区块持久化数据。</para>
+    /// 正在读取信息状态处理器。
+    /// <para>负责通过持久化缓存器夺取区块储存信息；缓存未命中时只创建读取待办任务。</para>
     /// <para>文件不存在是正常情况，此时保持 <see cref="Chunk.Data"/> 为 <see langword="null"/>，交由后续 <see cref="LoadingInMemoryHandler"/> 负责生成或初始化内存数据。</para>
     /// </summary>
     public sealed class ReadingInformationHandler : PersistenceStateHandler
@@ -14,7 +15,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Handler
         // ================================================================================
 
         /// <summary>
-        /// 执行同步读取逻辑。
+        /// 执行缓存驱动的读取逻辑。
         /// </summary>
         public override StateExecutionResult Execute(ChunkManager manager, Chunk chunk)
         {
@@ -29,11 +30,11 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Handler
                 return StateExecutionResult.Success;
             }
 
-            // 同步读取区块持久化储存对象。
-            ChunkPersistence.PersistenceRequestResult requestResult =
-                ChunkPersistence.LoadBlocking(manager.OwnerLayer, chunk, manager.OwnerLayer.StorageFilePath, out ChunkDataStorage loadedStorage);
+            // 优先夺取缓存；未命中时由缓存器创建 Read 待办任务并等待后续 tick 回收结果。
+            PersistenceRequestResult requestResult =
+                manager.PersistenceCache.TryTakeOut(chunk, out ChunkDataStorage loadedStorage);
 
-            if (requestResult != ChunkPersistence.PersistenceRequestResult.Success)
+            if (requestResult != PersistenceRequestResult.Success)
             {
                 return ToStateExecutionResult(requestResult);
             }

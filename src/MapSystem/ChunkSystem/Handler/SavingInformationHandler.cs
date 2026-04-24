@@ -1,9 +1,11 @@
 namespace WorldWeaver.MapSystem.ChunkSystem.Handler
 {
+    using WorldWeaver.MapSystem.ChunkSystem.Persistence;
+
     /// <summary>
-    /// 正在保存信息状态处理器（同步）。
-    /// <para>负责在主线程中阻塞式将当前 <see cref="ChunkData"/> 写入持久化层。</para>
-    /// <para>若区块当前没有内存数据，则直接视为无需保存并成功通过。</para>
+    /// 正在保存信息状态处理器。
+    /// <para>负责将当前 <see cref="Data.ChunkData"/> 提交到持久化缓存表，不直接写入磁盘。</para>
+    /// <para>若区块当前没有内存数据，则直接视为无需提交并成功通过。</para>
     /// </summary>
     public sealed class SavingInformationHandler : PersistenceStateHandler
     {
@@ -12,7 +14,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Handler
         // ================================================================================
 
         /// <summary>
-        /// 执行同步保存逻辑。
+        /// 执行缓存提交逻辑。
         /// </summary>
         public override StateExecutionResult Execute(ChunkManager manager, Chunk chunk)
         {
@@ -21,9 +23,8 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Handler
                 return StateExecutionResult.PermanentFailure;
             }
 
-            // 同步保存当前区块数据。
-            ChunkPersistence.PersistenceRequestResult requestResult =
-                ChunkPersistence.SaveBlocking(manager.OwnerLayer, chunk, manager.OwnerLayer.StorageFilePath);
+            // 保存状态只写入缓存，实际 Store 由缓存器后续清理周期延迟执行。
+            PersistenceRequestResult requestResult = manager.PersistenceCache.TrySave(chunk);
 
             return ToStateExecutionResult(requestResult);
         }
