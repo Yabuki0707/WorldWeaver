@@ -29,7 +29,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
 
         /// <summary>
         /// 当前缓存器的缓存表。
-        /// <para>Store 任务组只携带 chunk key，实际写入时从这里按 key 读取当前缓存快照。</para>
+    /// <para>Store 任务组只携带 chunk key，实际写入时从这里按 key 读取当前缓存项。</para>
         /// </summary>
         private readonly ChunkPersistenceCacheTable _cacheTable;
 
@@ -37,7 +37,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// 创建阻塞型持久化器。
         /// </summary>
         /// <param name="ownerLayer">当前 worker 所属地图层。</param>
-        /// <param name="cacheTable">当前缓存器的缓存表；Store 任务执行时用于读取储存快照。</param>
+        /// <param name="cacheTable">当前缓存器的缓存表；Store 任务执行时用于读取储存对象与写入 tick。</param>
         public ChunkPersistenceBlockingWorker(MapLayer ownerLayer, ChunkPersistenceCacheTable cacheTable = null)
             : this(ownerLayer, ownerLayer.StorageFilePath, cacheTable)
         {
@@ -48,7 +48,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         /// <param name="ownerLayer">当前 worker 所属地图层。</param>
         /// <param name="rootPath">region 文件根路径。</param>
-        /// <param name="cacheTable">当前缓存器的缓存表；Store 任务执行时用于读取储存快照。</param>
+        /// <param name="cacheTable">当前缓存器的缓存表；Store 任务执行时用于读取储存对象与写入 tick。</param>
         public ChunkPersistenceBlockingWorker(
             MapLayer ownerLayer,
             string rootPath,
@@ -64,12 +64,12 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         /// <param name="taskGroup">需要执行的持久化任务组。</param>
         /// <returns>任务组内每个 chunk 的完成结果。</returns>
-        internal ChunkPersistenceCompletedTask Execute(RegionChunksPersistenceTaskGroup taskGroup)
+        internal IReadOnlyList<ChunkPersistenceCompletedChunkResult> Execute(RegionChunksPersistenceTaskGroup taskGroup)
         {
             if (taskGroup.IsEmpty)
             {
                 // 空任务组没有实际 IO，返回空读取结果供调用方安全忽略。
-                return new ChunkPersistenceCompletedTask(PersistenceOperationType.Read, []);
+                return [];
             }
 
             // 阻塞 worker 只区分内部 IO 类型：Read 从 region 读取，Store 写回 region。
@@ -86,7 +86,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         /// <param name="taskGroup">只包含同一 region 的读取任务组。</param>
         /// <returns>读取任务组的完成结果。</returns>
-        private ChunkPersistenceCompletedTask ExecuteReadGroup(RegionChunksPersistenceTaskGroup taskGroup)
+        private IReadOnlyList<ChunkPersistenceCompletedChunkResult> ExecuteReadGroup(RegionChunksPersistenceTaskGroup taskGroup)
         {
             List<ChunkPersistenceCompletedChunkResult> results = [];
             try
@@ -104,17 +104,15 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                     // 调用时 region 原本不存在，说明该 region 没有任何历史 chunk 数据；所有读取都返回空成功。
                     foreach (long chunkKey in taskGroup)
                     {
-                        ChunkPosition chunkPosition = new(chunkKey);
                         results.Add(new ChunkPersistenceCompletedChunkResult(
                             chunkKey,
-                            chunkPosition,
                             PersistenceRequestResult.Success,
                             null,
                             0,
                             null));
                     }
 
-                    return new ChunkPersistenceCompletedTask(PersistenceOperationType.Read, results);
+                    return results;
                 }
 
                 // region 已存在时打开读取器，逐 chunk 读取储存对象。
@@ -132,7 +130,6 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                     {
                         results.Add(new ChunkPersistenceCompletedChunkResult(
                             chunkKey,
-                            chunkPosition,
                             PersistenceRequestResult.PermanentFailure,
                             null,
                             0,
@@ -145,7 +142,6 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                         ChunkPersistenceStorageValidator.ValidateLoadedStorage(storage, _ownerLayer.ChunkSize);
                     results.Add(new ChunkPersistenceCompletedChunkResult(
                         chunkKey,
-                        chunkPosition,
                         validateResult,
                         validateResult == PersistenceRequestResult.Success ? storage : null,
                         0,
@@ -168,7 +164,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                 return CreateGroupRetryLater(taskGroup, exception.Message);
             }
 
-            return new ChunkPersistenceCompletedTask(PersistenceOperationType.Read, results);
+            return results;
         }
 
         /// <summary>
@@ -176,7 +172,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// </summary>
         /// <param name="taskGroup">只包含同一 region 的储存任务组。</param>
         /// <returns>储存任务组的完成结果。</returns>
-        private ChunkPersistenceCompletedTask ExecuteStoreGroup(RegionChunksPersistenceTaskGroup taskGroup)
+        private IReadOnlyList<ChunkPersistenceCompletedChunkResult> ExecuteStoreGroup(RegionChunksPersistenceTaskGroup taskGroup)
         {
             try
             {
@@ -218,19 +214,19 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                     foreach (long chunkKey in taskGroup)
                     {
                         ChunkPosition chunkPosition = new(chunkKey);
-                        // Store 任务组只携带 key，真正写入前从缓存表读取当前快照。
-                        if (!_cacheTable.TryGetSnapshot(chunkKey, out ChunkPersistenceCacheSnapshot snapshot))
+                        // Store 任务组只携带 key，真正写入前从缓存表读取当前缓存项。
+                        if (!_cacheTable.TryGetStorageInfo(chunkKey, out ChunkDataStorage storage, out ulong storedTick))
                         {
-                            return CreateGroupFailure(taskGroup, $"chunk {chunkPosition} 的 Store 任务缺少缓存快照。");
+                            return CreateGroupFailure(taskGroup, $"Store 任务组因 chunk {chunkPosition} 缺少缓存项而整体取消。");
                         }
 
-                        if (snapshot.Storage == null)
+                        if (storage == null)
                         {
-                            return CreateGroupFailure(taskGroup, $"chunk {chunkPosition} 的储存对象为空。");
+                            return CreateGroupFailure(taskGroup, $"Store 任务组因 chunk {chunkPosition} 的储存对象为空而整体取消。");
                         }
 
-                        storedTicks[chunkKey] = snapshot.StoredTick;
-                        writeItems.Add(new ChunkRegionWriter.ChunkStorageWriteItem(chunkPosition, snapshot.Storage));
+                        storedTicks[chunkKey] = storedTick;
+                        writeItems.Add(new ChunkRegionWriter.ChunkStorageWriteItem(chunkPosition, storage));
                     }
 
                     // 组储存内部会以组为单位处理空闲分区，再逐 chunk 完成链替换与旧链回收。
@@ -245,14 +241,13 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                     {
                         results.Add(new ChunkPersistenceCompletedChunkResult(
                             chunkKey,
-                            new ChunkPosition(chunkKey),
                             PersistenceRequestResult.Success,
                             null,
                             storedTicks.TryGetValue(chunkKey, out ulong storedTick) ? storedTick : 0,
                             null));
                     }
 
-                    return new ChunkPersistenceCompletedTask(PersistenceOperationType.Store, results);
+                    return results;
                 }
                 finally
                 {
@@ -286,7 +281,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// <param name="taskGroup">失败的任务组。</param>
         /// <param name="errorMessage">需要写入每个 chunk 结果的错误信息。</param>
         /// <returns>任务组内所有 chunk 都为结构性失败的完成结果。</returns>
-        private static ChunkPersistenceCompletedTask CreateGroupFailure(RegionChunksPersistenceTaskGroup taskGroup, string errorMessage)
+        private static IReadOnlyList<ChunkPersistenceCompletedChunkResult> CreateGroupFailure(RegionChunksPersistenceTaskGroup taskGroup, string errorMessage)
         {
             List<ChunkPersistenceCompletedChunkResult> results = [];
             // 结构性失败不进入自动重试，避免坏路径、坏数据或逻辑错误造成无限循环。
@@ -294,14 +289,13 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
             {
                 results.Add(new ChunkPersistenceCompletedChunkResult(
                     chunkKey,
-                    new ChunkPosition(chunkKey),
                     PersistenceRequestResult.PermanentFailure,
                     null,
                     0,
                     errorMessage));
             }
 
-            return new ChunkPersistenceCompletedTask(taskGroup.OperationType, results);
+            return results;
         }
 
         /// <summary>
@@ -310,7 +304,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// <param name="taskGroup">临时失败的任务组。</param>
         /// <param name="errorMessage">需要写入每个 chunk 结果的错误信息。</param>
         /// <returns>任务组内所有 chunk 都为稍后重试的完成结果。</returns>
-        private static ChunkPersistenceCompletedTask CreateGroupRetryLater(RegionChunksPersistenceTaskGroup taskGroup, string errorMessage)
+        private static IReadOnlyList<ChunkPersistenceCompletedChunkResult> CreateGroupRetryLater(RegionChunksPersistenceTaskGroup taskGroup, string errorMessage)
         {
             List<ChunkPersistenceCompletedChunkResult> results = [];
             // IO 异常和访问波动按临时失败处理，由缓存器根据当前缓存状态决定是否重新入队。
@@ -318,14 +312,13 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
             {
                 results.Add(new ChunkPersistenceCompletedChunkResult(
                     chunkKey,
-                    new ChunkPosition(chunkKey),
                     PersistenceRequestResult.RetryLater,
                     null,
                     0,
                     errorMessage));
             }
 
-            return new ChunkPersistenceCompletedTask(taskGroup.OperationType, results);
+            return results;
         }
     }
 }

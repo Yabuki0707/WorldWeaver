@@ -1,49 +1,10 @@
+using System;
 using System.Collections.Generic;
+using Godot;
 using WorldWeaver.MapSystem.ChunkSystem.Data;
 
 namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
 {
-    /// <summary>
-    /// 持久化缓存项快照。
-    /// <para>快照用于让缓存器在锁外做调度判断，避免直接暴露缓存表内部字典。</para>
-    /// </summary>
-    /// <param name="chunkKey">区块坐标 long key。</param>
-    /// <param name="storage">缓存的区块储存对象；可以为 null，表示读取确认磁盘中没有旧数据。</param>
-    /// <param name="storedTick">该缓存项写入缓存表时的缓存器 tick。</param>
-    internal readonly struct ChunkPersistenceCacheSnapshot(
-        long chunkKey,
-        ChunkDataStorage storage,
-        ulong storedTick)
-    {
-        /// <summary>
-        /// 区块坐标 long key。
-        /// </summary>
-        public long ChunkKey { get; } = chunkKey;
-
-        /// <summary>
-        /// 缓存的区块储存对象。
-        /// <para>该值为 null 时，表示一次读取已经确认磁盘中没有该 chunk 数据。</para>
-        /// </summary>
-        public ChunkDataStorage Storage { get; } = storage;
-
-        /// <summary>
-        /// 写入缓存表时的 tick。
-        /// </summary>
-        public ulong StoredTick { get; } = storedTick;
-
-        /// <summary>
-        /// 判断该缓存快照在指定 tick 下是否过期。
-        /// </summary>
-        /// <param name="currentTick">当前缓存器 tick。</param>
-        /// <param name="expirationTicks">缓存项允许停留在缓存表中的最大 tick 数。</param>
-        /// <returns>缓存快照是否已经达到过期期限。</returns>
-        public bool IsExpired(ulong currentTick, ulong expirationTicks)
-        {
-            // currentTick 小于 StoredTick 代表 tick 溢出或外部传参异常，此时不能按过期处理。
-            return currentTick >= StoredTick && currentTick - StoredTick >= expirationTicks;
-        }
-    }
-
     /// <summary>
     /// 区块持久化缓存表。
     /// <para>该表完全存在于内存中，并以 chunk key 缓存最新 IO 结果或保存结果。</para>
@@ -52,7 +13,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
     {
         /// <summary>
         /// 缓存表内部项。
-        /// <para>该类型只保存在字典内部，不向外暴露，外部读取统一转换为 <see cref="ChunkPersistenceCacheSnapshot"/>。</para>
+        /// <para>该类型只保存在字典内部，不向外暴露，外部通过 out 参数读取必要字段。</para>
         /// </summary>
         /// <param name="storage">缓存的区块储存对象；可以为 null，表示读取确认磁盘中没有旧数据。</param>
         /// <param name="storedTick">缓存写入时的缓存器 tick。</param>
@@ -80,6 +41,117 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// <para>该表当前采用普通 Dictionary，因此所有读写都必须经由该锁保护。</para>
         /// </summary>
         private readonly object _lockObject = new();
+
+        /// <summary>
+        /// Read 区块组待办任务分发优先度。
+        /// <para>正数表示每分发该数量的 Read 区块组后分发一个 Store 区块组；负数表示反向优先 Store。</para>
+        /// <para>设置为 0 时会自动修正为 1，并输出警告。</para>
+        /// </summary>
+        private int _readTaskGroupDispatchPriority = 5;
+
+        // ================================================================================
+        //                                  调度优先度
+        // ================================================================================
+
+        /// <summary>
+        /// Read 区块组待办任务分发优先度。
+        /// <para>正数表示 Read 为优势操作类型，绝对值代表连续分发多少个 Read 任务组后插入一个 Store 任务组。</para>
+        /// <para>负数表示 Store 为优势操作类型，绝对值代表连续分发多少个 Store 任务组后插入一个 Read 任务组。</para>
+        /// </summary>
+        public int ReadTaskGroupDispatchPriority
+        {
+            get => _readTaskGroupDispatchPriority;
+            set
+            {
+                // 0 没有明确优先语义，按用户约定自动修正为 1，避免调度循环无法确定优势方。
+                if (value == 0)
+                {
+                    GD.PushWarning("[ChunkPersistenceCacheTable] ReadTaskGroupDispatchPriority 不能为 0，已自动调整为 1。");
+                    _readTaskGroupDispatchPriority = 1;
+                    return;
+                }
+
+                _readTaskGroupDispatchPriority = value;
+            }
+        }
+
+        /// <summary>
+        /// 根据 Read 区块组分发优先度拆出优势操作桶与劣势操作桶。
+        /// </summary>
+        /// <param name="operationBuckets">按操作类型索引保存的一次性分桶结果。</param>
+        /// <param name="priorityOperationType">优势操作类型。</param>
+        /// <param name="priorityBuckets">优势操作类型对应的 region 桶列表。</param>
+        /// <param name="secondaryOperationType">劣势操作类型。</param>
+        /// <param name="secondaryBuckets">劣势操作类型对应的 region 桶列表。</param>
+        /// <param name="priorityTaskGroupQuota">优势操作类型连续分发任务组数量。</param>
+        internal void GetPrioritizedOperationBuckets(
+            List<(Vector2I RegionPosition, long[] ChunkKeys)>[] operationBuckets,
+            out PersistenceOperationType priorityOperationType,
+            out List<(Vector2I RegionPosition, long[] ChunkKeys)> priorityBuckets,
+            out PersistenceOperationType secondaryOperationType,
+            out List<(Vector2I RegionPosition, long[] ChunkKeys)> secondaryBuckets,
+            out int priorityTaskGroupQuota)
+        {
+            // 先读取当前优先度配置；该值只影响本轮分发，不直接修改待办表或缓存表内容。
+            // 后续调度会按这个值拆分出“优势方连续分发多少组、劣势方插入一组”的节奏。
+            // 读取属性时再次兜底，防止字段被未来代码绕过 setter 写成 0。
+            int priority = ReadTaskGroupDispatchPriority;
+            if (priority == 0)
+            {
+                GD.PushWarning("[ChunkPersistenceCacheTable] ReadTaskGroupDispatchPriority 为 0，已按 1 处理。");
+                priority = 1;
+            }
+
+            // 正数表示 Read 为优势方；负数表示 Store 为优势方。
+            // 这里把方向先确定下来，缓存器后续只处理 priority/secondary 两个抽象角色。
+            if (priority > 0)
+            {
+                priorityOperationType = PersistenceOperationType.Read;
+                secondaryOperationType = PersistenceOperationType.Store;
+            }
+            else
+            {
+                priorityOperationType = PersistenceOperationType.Store;
+                secondaryOperationType = PersistenceOperationType.Read;
+            }
+
+            // int.MinValue 取绝对值会溢出，所以单独按 int.MaxValue 处理。
+            // 这种值等价于几乎只分发优势方，但仍保留劣势方尝试机会的循环结构。
+            priorityTaskGroupQuota = priority == int.MinValue ? int.MaxValue : Math.Abs(priority);
+            // 分桶数组第一层索引与 PersistenceOperationType 枚举值一致。
+            // GetOperationBucketList 会处理 null、越界等异常输入，让调用方拿到可安全遍历的列表。
+            priorityBuckets = GetOperationBucketList(operationBuckets, priorityOperationType);
+            secondaryBuckets = GetOperationBucketList(operationBuckets, secondaryOperationType);
+        }
+
+        /// <summary>
+        /// 从分桶数组中读取指定操作类型对应的 region 桶列表。
+        /// </summary>
+        /// <param name="operationBuckets">按操作类型索引保存的一次性分桶结果。</param>
+        /// <param name="operationType">需要读取的操作类型。</param>
+        /// <returns>指定操作类型对应的 region 桶列表。</returns>
+        private static List<(Vector2I RegionPosition, long[] ChunkKeys)> GetOperationBucketList(
+            List<(Vector2I RegionPosition, long[] ChunkKeys)>[] operationBuckets,
+            PersistenceOperationType operationType)
+        {
+            int operationIndex = (int)operationType;
+            if (operationBuckets == null ||
+                operationIndex < 0 ||
+                operationIndex >= operationBuckets.Length ||
+                operationBuckets[operationIndex] == null)
+            {
+                // 当前操作没有桶时返回空列表，避免调用方为 null 分支写重复保护。
+                return [];
+            }
+
+            // 返回的是一次性分桶中的原列表引用，调度阶段只通过游标顺序推进。
+            // 这里不复制列表，避免多一次无意义的桶遍历和数组分配。
+            return operationBuckets[operationIndex];
+        }
+
+        // ================================================================================
+        //                                  基础操作
+        // ================================================================================
 
         /// <summary>
         /// 尝试夺取缓存项。
@@ -137,50 +209,52 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         }
 
         /// <summary>
-        /// 尝试获取指定 chunk 的缓存快照。
+        /// 尝试获取指定 chunk 的缓存储存对象与写入 tick。
         /// </summary>
-        /// <param name="chunkKey">需要读取快照的区块坐标 long key。</param>
-        /// <param name="snapshot">读取出的不可变快照。</param>
+        /// <param name="chunkKey">需要读取缓存信息的区块坐标 long key。</param>
+        /// <param name="storage">缓存的区块储存对象；可以为 null。</param>
+        /// <param name="storedTick">缓存项写入缓存表时的 tick。</param>
         /// <returns>缓存表中是否存在该 chunk 的缓存项。</returns>
-        internal bool TryGetSnapshot(long chunkKey, out ChunkPersistenceCacheSnapshot snapshot)
+        internal bool TryGetStorageInfo(long chunkKey, out ChunkDataStorage storage, out ulong storedTick)
         {
             lock (_lockObject)
             {
-                // 快照只复制引用和值，不暴露内部 CacheEntry，防止锁外修改表状态。
+                // 只复制调用方需要的引用和值，不暴露内部 CacheEntry。
                 if (!_entries.TryGetValue(chunkKey, out CacheEntry entry))
                 {
-                    snapshot = default;
+                    storage = null;
+                    storedTick = 0;
                     return false;
                 }
 
-                snapshot = new ChunkPersistenceCacheSnapshot(chunkKey, entry.Storage, entry.StoredTick);
+                storage = entry.Storage;
+                storedTick = entry.StoredTick;
                 return true;
             }
         }
 
         /// <summary>
-        /// 获取当前全部已经过期的缓存快照。
+        /// 获取当前全部已经过期的缓存项。
         /// </summary>
         /// <param name="currentTick">当前缓存器 tick。</param>
         /// <param name="expirationTicks">缓存项过期期限 tick。</param>
-        /// <returns>扫描时已经过期的缓存快照列表。</returns>
-        internal List<ChunkPersistenceCacheSnapshot> GetExpiredSnapshots(ulong currentTick, ulong expirationTicks)
+        /// <returns>扫描时已经过期的缓存项列表。</returns>
+        internal List<(long ChunkKey, ChunkDataStorage Storage)> GetExpiredEntries(ulong currentTick, ulong expirationTicks)
         {
-            List<ChunkPersistenceCacheSnapshot> snapshots = [];
+            List<(long ChunkKey, ChunkDataStorage Storage)> entries = [];
             lock (_lockObject)
             {
-                // 只在锁内枚举字典；返回给缓存器的是快照列表，后续判断不再持有表锁。
+                // 只在锁内枚举字典；返回给缓存器的是普通值元组，后续判断不再持有表锁。
                 foreach (KeyValuePair<long, CacheEntry> pair in _entries)
                 {
-                    ChunkPersistenceCacheSnapshot snapshot = new(pair.Key, pair.Value.Storage, pair.Value.StoredTick);
-                    if (snapshot.IsExpired(currentTick, expirationTicks))
+                    if (IsExpired(pair.Value.StoredTick, currentTick, expirationTicks))
                     {
-                        snapshots.Add(snapshot);
+                        entries.Add((pair.Key, pair.Value.Storage));
                     }
                 }
             }
 
-            return snapshots;
+            return entries;
         }
 
         /// <summary>
@@ -194,14 +268,13 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         {
             lock (_lockObject)
             {
-                // 重新在锁内读取当前项，避免根据过期扫描时的旧快照删除新写入的缓存。
+                // 重新在锁内读取当前项，避免根据过期扫描时的旧结果删除新写入的缓存。
                 if (!_entries.TryGetValue(chunkKey, out CacheEntry entry))
                 {
                     return false;
                 }
 
-                ChunkPersistenceCacheSnapshot snapshot = new(chunkKey, entry.Storage, entry.StoredTick);
-                if (!snapshot.IsExpired(currentTick, expirationTicks))
+                if (!IsExpired(entry.StoredTick, currentTick, expirationTicks))
                 {
                     return false;
                 }
@@ -239,8 +312,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                     return false;
                 }
 
-                ChunkPersistenceCacheSnapshot snapshot = new(chunkKey, entry.Storage, entry.StoredTick);
-                if (!snapshot.IsExpired(currentTick, expirationTicks))
+                if (!IsExpired(entry.StoredTick, currentTick, expirationTicks))
                 {
                     return false;
                 }
@@ -251,17 +323,17 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         }
 
         /// <summary>
-        /// 移除指定 chunk 的缓存项。
+        /// 判断缓存写入 tick 在当前 tick 下是否已经过期。
         /// </summary>
-        /// <param name="chunkKey">需要移除缓存的区块坐标 long key。</param>
-        /// <returns>是否确实移除了一个缓存项。</returns>
-        public bool Remove(long chunkKey)
+        /// <param name="storedTick">缓存项写入 tick。</param>
+        /// <param name="currentTick">当前缓存器 tick。</param>
+        /// <param name="expirationTicks">缓存项允许停留在缓存表中的最大 tick 数。</param>
+        /// <returns>缓存项是否已经达到过期期限。</returns>
+        internal static bool IsExpired(ulong storedTick, ulong currentTick, ulong expirationTicks)
         {
-            lock (_lockObject)
-            {
-                // 普通移除只服务于明确的外部清理场景，不进行过期或 tick 校验。
-                return _entries.Remove(chunkKey);
-            }
+            // currentTick 小于 storedTick 代表 tick 溢出或外部传参异常，此时不能按过期处理。
+            return currentTick >= storedTick && currentTick - storedTick >= expirationTicks;
         }
+
     }
 }
