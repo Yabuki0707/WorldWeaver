@@ -1,9 +1,140 @@
+using System;
 using System.Collections.Generic;
 using Godot;
 using WorldWeaver.MapSystem.ChunkSystem.Persistence.Region;
 
 namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
 {
+    /// <summary>
+    /// 待办任务分组容器。
+    /// <para>该结构体保存待办表本轮一次性分桶结果，以及分桶过程中收集到的 chunk key 总数。</para>
+    /// </summary>
+    internal readonly struct PendingTaskBucketContainer
+    {
+        // ================================================================================
+        //                                  构造
+        // ================================================================================
+
+        /// <summary>
+        /// 创建待办任务分组容器。
+        /// <para>构造阶段会立刻校验分桶数组协议，后续调度流程无需重复检测数组结构。</para>
+        /// </summary>
+        /// <param name="chunkKeyCount">分桶过程中收集到的 chunk key 总数。</param>
+        /// <param name="operationBuckets">按操作类型索引保存的 region 待办桶数组。</param>
+        internal PendingTaskBucketContainer(
+            int chunkKeyCount,
+            List<(Vector2I RegionPosition, long[] ChunkKeys)>[] operationBuckets)
+        {
+            ChunkKeyCount = chunkKeyCount;
+            // 分桶数组是待办表和分发器之间的硬协议，必须严格包含 Read / Store 两个操作槽位。
+            if (operationBuckets == null || operationBuckets.Length != 2)
+            {
+                GD.PushError($"[PendingTaskBucketContainer] 待办分桶数组结构错误，期望长度 2，实际长度: {operationBuckets?.Length ?? -1}。");
+                OperationBuckets = CreateEmptyOperationBuckets();
+                return;
+            }
+
+            // Read 桶列表必须存在，即使当前没有 Read 任务，也应当是空列表而不是 null。
+            if (operationBuckets[(int)PersistenceOperationType.Read] == null)
+            {
+                GD.PushError("[PendingTaskBucketContainer] 待办分桶数组缺少 Read 桶列表，已替换为空列表。");
+                operationBuckets[(int)PersistenceOperationType.Read] = [];
+            }
+
+            // Store 桶列表必须存在，即使当前没有 Store 任务，也应当是空列表而不是 null。
+            if (operationBuckets[(int)PersistenceOperationType.Store] == null)
+            {
+                GD.PushError("[PendingTaskBucketContainer] 待办分桶数组缺少 Store 桶列表，已替换为空列表。");
+                operationBuckets[(int)PersistenceOperationType.Store] = [];
+            }
+
+            OperationBuckets = operationBuckets;
+        }
+
+        // ================================================================================
+        //                                  属性
+        // ================================================================================
+
+        /// <summary>
+        /// 分桶过程中收集到的 chunk key 总数。
+        /// </summary>
+        public int ChunkKeyCount { get; }
+
+        /// <summary>
+        /// 按操作类型索引保存的 region 待办桶数组。
+        /// <para>第一层索引必须与 <see cref="PersistenceOperationType"/> 枚举值一致。</para>
+        /// </summary>
+        public List<(Vector2I RegionPosition, long[] ChunkKeys)>[] OperationBuckets { get; }
+
+        // ================================================================================
+        //                                  优先级分组
+        // ================================================================================
+
+        /// <summary>
+        /// 根据 Read 区块组分发优先度拆出优势操作桶与劣势操作桶。
+        /// </summary>
+        /// <param name="readTaskGroupDispatchPriority">Read 区块组待办任务分发优先度。</param>
+        /// <param name="priorityOperationType">优势操作类型。</param>
+        /// <param name="priorityBuckets">优势操作类型对应的 region 桶列表。</param>
+        /// <param name="secondaryOperationType">劣势操作类型。</param>
+        /// <param name="secondaryBuckets">劣势操作类型对应的 region 桶列表。</param>
+        /// <param name="priorityTaskGroupQuota">优势操作类型连续分发任务组数量。</param>
+        /// <returns>是否成功从分桶数组中取出 Read / Store 两侧分桶。</returns>
+        internal bool TryGetPrioritizedOperationBuckets(
+            int readTaskGroupDispatchPriority,
+            out PersistenceOperationType priorityOperationType,
+            out List<(Vector2I RegionPosition, long[] ChunkKeys)> priorityBuckets,
+            out PersistenceOperationType secondaryOperationType,
+            out List<(Vector2I RegionPosition, long[] ChunkKeys)> secondaryBuckets,
+            out int priorityTaskGroupQuota)
+        {
+            priorityOperationType = default;
+            priorityBuckets = null;
+            secondaryOperationType = default;
+            secondaryBuckets = null;
+            priorityTaskGroupQuota = 0;
+
+            // 正数表示 Read 为优势方；负数表示 Store 为优势方。
+            if (readTaskGroupDispatchPriority > 0)
+            {
+                priorityOperationType = PersistenceOperationType.Read;
+                secondaryOperationType = PersistenceOperationType.Store;
+            }
+            else
+            {
+                priorityOperationType = PersistenceOperationType.Store;
+                secondaryOperationType = PersistenceOperationType.Read;
+            }
+
+            // int.MinValue 取绝对值会溢出，所以单独按 int.MaxValue 处理。
+            priorityTaskGroupQuota = readTaskGroupDispatchPriority == int.MinValue
+                ? int.MaxValue
+                : Math.Abs(readTaskGroupDispatchPriority);
+            // 分桶数组第一层索引与 PersistenceOperationType 枚举值一致，直接按枚举值取列表。
+            priorityBuckets = OperationBuckets[(int)priorityOperationType];
+            // 劣势操作类型同样直接按枚举值取列表。
+            secondaryBuckets = OperationBuckets[(int)secondaryOperationType];
+            return true;
+        }
+
+        // ================================================================================
+        //                                  结构校验
+        // ================================================================================
+
+        /// <summary>
+        /// 创建空的 Read / Store 分桶数组。
+        /// </summary>
+        /// <returns>结构合法但不包含任何待办任务的分桶数组。</returns>
+        private static List<(Vector2I RegionPosition, long[] ChunkKeys)>[] CreateEmptyOperationBuckets()
+        {
+            return
+            [
+                [],
+                []
+            ];
+        }
+    }
+
     /// <summary>
     /// 持久化待办任务表。
     /// <para>该表负责保存 chunk key 与内部 IO 操作类型的映射，并提供按 region 与操作类型归桶的视图。</para>
@@ -97,9 +228,11 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
         /// 将当前待办任务按操作类型与 region 归桶。
         /// <para>分桶结果是一次性计算结果，第一层数组索引对应操作类型，第二层列表保存该操作下的 region 桶。</para>
         /// </summary>
-        /// <returns>按操作类型索引保存的 region 待办桶数组。</returns>
-        internal List<(Vector2I RegionPosition, long[] ChunkKeys)>[] BuildRegionOperationBuckets()
+        /// <returns>本轮待办任务分组容器。</returns>
+        internal PendingTaskBucketContainer BuildRegionOperationBuckets()
         {
+            // 统计本次分桶实际收集到的 chunk key 数量，供分发失败日志直接使用。
+            int chunkKeysCount = 0;
             // 构建期先使用 List<long>，因为待办表遍历时不知道每个 region 桶最终会收集多少 chunk。
             // 第一层数组固定为两个操作类型槽位：0 为 Read，1 为 Store。
             List<(Vector2I RegionPosition, List<long> ChunkKeys)>[] buildingBuckets =
@@ -135,11 +268,12 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
 
                 // 待办表只负责归桶，真正的 Read / Store 数据判断留到缓存器分发前完成。
                 bucket.Add(pair.Key);
+                chunkKeysCount++;
             }
 
             // 调度阶段只需要按索引顺序读取 chunk key，因此最终桶内容转为更紧凑的 long[]。
             // 这一步也把构建期可变列表和本轮一次性调度视图分离开。
-            return ConvertBuckets(buildingBuckets);
+            return new PendingTaskBucketContainer(chunkKeysCount, ConvertBuckets(buildingBuckets));
         }
 
         /// <summary>

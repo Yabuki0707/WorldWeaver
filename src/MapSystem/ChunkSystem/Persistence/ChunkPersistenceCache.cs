@@ -132,6 +132,13 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
 		private ulong _currentTick;
 
 		/// <summary>
+		/// Read 区块组待办任务分发优先度。
+		/// <para>正数表示每分发该数量的 Read 区块组后分发一个 Store 区块组；负数表示反向优先 Store。</para>
+		/// <para>设置为 0 时会自动修正为 1，并输出警告。</para>
+		/// </summary>
+		private int _readTaskGroupDispatchPriority = 5;
+
+		/// <summary>
 		/// 内存缓存表，始终代表当前系统认定的最新区块储存信息。
 		/// </summary>
 		public ChunkPersistenceCacheTable CacheTable { get; }
@@ -146,6 +153,28 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
 		/// <para>缓存器只保存根路径上下文，内部任务调度以 region 坐标为基准传递。</para>
 		/// </summary>
 		public string RootPath { get; }
+
+		/// <summary>
+		/// Read 区块组待办任务分发优先度。
+		/// <para>正数表示 Read 为优势操作类型，绝对值代表连续分发多少个 Read 任务组后插入一个 Store 任务组。</para>
+		/// <para>负数表示 Store 为优势操作类型，绝对值代表连续分发多少个 Store 任务组后插入一个 Read 任务组。</para>
+		/// </summary>
+		public int ReadTaskGroupDispatchPriority
+		{
+			get => _readTaskGroupDispatchPriority;
+			set
+			{
+				// 0 没有明确优先语义，按约定自动修正为 1，避免调度循环无法确定优势方。
+				if (value == 0)
+				{
+					GD.PushWarning("[ChunkPersistenceCache] ReadTaskGroupDispatchPriority 不能为 0，已自动调整为 1。");
+					_readTaskGroupDispatchPriority = 1;
+					return;
+				}
+
+				_readTaskGroupDispatchPriority = value;
+			}
+		}
 
 		// ================================================================================
 		//                                  构造
@@ -301,25 +330,22 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
 			// 待办表负责生成一次性分桶，缓存器按优先度把桶内 chunk key 改造成任务组并分发。
 			// 分桶本身不做可执行性判断，因为缓存表和异步占用表在分桶后仍可能发生变化。
 			// 因此本方法只拿到“本轮待尝试的候选集合”，真正能不能执行留给后续遍历过程逐项确认。
-			List<(Vector2I RegionPosition, long[] ChunkKeys)>[] pendingBuckets =
-				PendingTaskTable.BuildRegionOperationBuckets();
-			DispatchTaskGroups(pendingBuckets);
+			PendingTaskBucketContainer pendingBucketContainer = PendingTaskTable.BuildRegionOperationBuckets();
+			DispatchTaskGroups(pendingBucketContainer);
 		}
 
 		/// <summary>
 		/// 按操作优先度分发待办持久化任务组。
 		/// <para>该方法在同一个循环框架内交替处理优势操作类型与劣势操作类型，分发失败会终止整轮分发。</para>
 		/// </summary>
-		/// <param name="operationBuckets">按操作类型索引保存的一次性 region 分桶数组。</param>
-		private void DispatchTaskGroups(List<(Vector2I RegionPosition, long[] ChunkKeys)>[] operationBuckets)
+		/// <param name="pendingBucketContainer">本轮待办任务分组容器。</param>
+		private void DispatchTaskGroups(PendingTaskBucketContainer pendingBucketContainer)
 		{
-			if (operationBuckets == null) return;
-
-			// 缓存表保存调度偏好：正数代表 Read 优先，负数代表 Store 优先。
+			// 缓存器保存调度偏好：正数代表 Read 优先，负数代表 Store 优先。
 			// 这里把符号和绝对值拆成“优势操作类型、劣势操作类型、优势连续配额”三部分，
 			// 后面的循环就不再关心正负号，只按两组桶和一个配额推进。
-			CacheTable.GetPrioritizedOperationBuckets(
-				operationBuckets,
+			if (!pendingBucketContainer.TryGetPrioritizedOperationBuckets(
+				ReadTaskGroupDispatchPriority,
 				// 优势操作类型
 				out PersistenceOperationType priorityOperationType,
 				// 优势操作类型的待办region桶列表。
@@ -329,10 +355,11 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
 				// 劣势操作类型的待办region桶列表。
 				out List<(Vector2I RegionPosition, long[] ChunkKeys)> secondaryBuckets,
 				// 优势操作类型连续分发任务组数量。
-				out int priorityTaskGroupQuota);
+				out int priorityTaskGroupQuota))
+			{
+				return;
+			}
 
-			// 本轮分桶中需要尝试分配的 chunk key 总数。
-			int pendingChunkCount = CountPendingBucketChunkKeys(operationBuckets);
 			// 本轮已经成功分发的任务组数量。
 			int dispatchedTaskGroupCount = 0;
 			// 优势操作类型当前扫描到的 region 桶索引。
@@ -363,7 +390,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
 						// 分发失败通常意味着异步槽位暂时不可用，继续遍历只会制造更多失败判断。
 						// 直接终止本轮分桶分发，未消费的桶元素会保留在待办表里，下一轮重新分桶再处理。
 						GD.Print(
-							$"[ChunkPersistenceCache] DispatchTaskGroups: {priorityOperationType} 任务组分发失败，整体分发流程已终止。已分发任务组数: {dispatchedTaskGroupCount}，估算已分发于异步任务的区块数: {dispatchedTaskGroupCount * MAX_CHUNK_COUNT_IN_TASK_GROUP}，本轮要分配的区块总数: {pendingChunkCount}。");
+							$"[ChunkPersistenceCache] DispatchTaskGroups: {priorityOperationType} 任务组分发失败，整体分发流程已终止。已分发任务组数: {dispatchedTaskGroupCount}，估算已分发于异步任务的区块数: {dispatchedTaskGroupCount * MAX_CHUNK_COUNT_IN_TASK_GROUP}，本轮要分配的区块总数: {pendingBucketContainer.ChunkKeyCount}。");
 						return;
 					}
 
@@ -387,7 +414,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
 				{
 					// 劣势方分发失败也同样终止整轮流程，避免一次调度 tick 内反复撞同一个限制。
 					GD.Print(
-						$"[ChunkPersistenceCache] DispatchTaskGroups: {secondaryOperationType} 任务组分发失败，整体分发流程已终止。已分发任务组数: {dispatchedTaskGroupCount}，估算已分发于异步任务的区块数: {dispatchedTaskGroupCount * MAX_CHUNK_COUNT_IN_TASK_GROUP}，本轮要分配的区块总数: {pendingChunkCount}。");
+						$"[ChunkPersistenceCache] DispatchTaskGroups: {secondaryOperationType} 任务组分发失败，整体分发流程已终止。已分发任务组数: {dispatchedTaskGroupCount}，估算已分发于异步任务的区块数: {dispatchedTaskGroupCount * MAX_CHUNK_COUNT_IN_TASK_GROUP}，本轮要分配的区块总数: {pendingBucketContainer.ChunkKeyCount}。");
 					return;
 				}
 
@@ -403,36 +430,6 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
 					return;
 				}
 			}
-		}
-
-		/// <summary>
-		/// 统计一次性分桶中包含的 chunk key 总数。
-		/// </summary>
-		/// <param name="operationBuckets">按操作类型索引保存的一次性 region 分桶数组。</param>
-		/// <returns>本轮分桶中待尝试分配的 chunk key 总数。</returns>
-		private static int CountPendingBucketChunkKeys(List<(Vector2I RegionPosition, long[] ChunkKeys)>[] operationBuckets)
-		{
-			if (operationBuckets == null)
-			{
-				return 0;
-			}
-
-			// 统计所有操作类型下的桶内 chunk 数量。
-			int chunkCount = 0;
-			foreach (List<(Vector2I RegionPosition, long[] ChunkKeys)> operationBucketList in operationBuckets)
-			{
-				if (operationBucketList == null)
-				{
-					continue;
-				}
-
-				foreach ((Vector2I _, long[] chunkKeys) in operationBucketList)
-				{
-					chunkCount += chunkKeys?.Length ?? 0;
-				}
-			}
-
-			return chunkCount;
 		}
 
 		/// <summary>
