@@ -6,7 +6,7 @@ namespace WorldWeaver.PixelShapeSystem
     /// <summary>
     /// 单点像素形状。
     /// <para>用于表示全局坐标系中的一个离散像素点。</para>
-    /// <para>由于仅包含单点，因此其边界差值盒的 <see cref="Rect2I.Size"/> 始终为 <c>(0,0)</c>。</para>
+    /// <para>由于仅包含单点，因此其边界差值盒的 <c>CoordinateBounds.Size</c> 始终为 <c>(0,0)</c>。</para>
     /// </summary>
     public sealed class SinglePoint : PixelShape
     {

@@ -20,6 +20,16 @@
 - 默认实现优先简单、直接、高性能
 - 需要几何变换能力时，再提供专门的变体类型
 
+## 基础输出契约
+
+- `CoordinateBounds` 表示形状的坐标包围盒。`Position` 是最小边界坐标，`Size` 是最大边界与最小边界的差值，不表示离散宽高数量。
+- `PointCount` 表示形状实际覆盖的离散点数量，不等同于包围盒面积。
+- `GetGlobalCoordinateIterator()` 提供流式坐标迭代，适合逐点消费，避免一次性分配容器。
+- `GetGlobalCoordinateList()` 返回坐标列表副本，适合需要列表操作的调用方。
+- `GetGlobalCoordinateArray()` 返回坐标数组副本，适合需要稳定快照或与外部数组对齐的调用方。
+
+所有坐标输出方式都应保持一致的点顺序，调用方可以在迭代器、列表和数组之间按性能与使用场景选择。
+
 ## 命名约定
 
 ### 变换能力约定
@@ -39,16 +49,16 @@
   - 支持 `AddPoint` 与 `AddPoints`
   - 适合需要持续增量构建点集的场景
 
-- `PointListShape`
-  - 静态点列表版本
-  - 保留输入顺序与重复点
-  - 不做去重校验，适合脏且快的读取场景
+- `PointSequenceShape`
+  - 静态点序列版本
+  - 不做内部去重，适合外部已保证无重复点或不在意重复点的场景
+  - 保留输入顺序与重复点是无内部去重带来的良性副作用
 
-- `MutablePointListShape`
-  - 动态点列表版本
+- `MutablePointSequenceShape`
+  - 动态点序列版本
   - 支持 `AddPoint` 与 `AddPoints`
   - 仅以列表作为核心容器
-  - 保留输入顺序与重复点，不做去重校验
+  - 不做内部去重，保留输入顺序与重复点是良性副作用
 
 - `TransformablePointSetShape`
   - 预留给支持镜像、大小扩展等几何变换能力的点集形状

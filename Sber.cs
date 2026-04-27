@@ -239,10 +239,10 @@ public partial class Sber : Node2D
 			}
 		}
 
-		// 使用静态点列表与目标稳定状态列表构造完整快照式请求表。
+		// 使用静态点序列与目标稳定状态列表构造完整快照式请求表。
 		ChunkLoadRequestTable requestTable = ChunkLoadRequestTable.Create(
 			new PixelValuesListShape<ChunkStateNode>(
-				new PointListShape(_requestedChunkPositions),
+				new PointSequenceShape(_requestedChunkPositions),
 				_requestedChunkStates));
 		if (requestTable == null)
 		{

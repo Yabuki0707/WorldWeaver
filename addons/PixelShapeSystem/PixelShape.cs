@@ -16,8 +16,8 @@ namespace WorldWeaver.PixelShapeSystem
 
         /// <summary>
         /// 图形的坐标边界范围。
-        /// <para><see cref="Rect2I.Position"/> 表示最小边界坐标（Min），<see cref="Rect2I.Size"/> 表示边界差值（Max - Min）。</para>
-        /// <para>最大边界坐标（Max）满足：<c>Max = Position + Size</c>。</para>
+        /// <para><see cref="Rect2I.Position"/> 表示最小边界坐标（Min），<c>CoordinateBounds.Size</c> 表示边界差值（Max - Min）。</para>
+        /// <para>最大边界坐标（Max）满足：<c>Max = Position + CoordinateBounds.Size</c>。</para>
         /// <para>例如：当 <c>Min=(1,1)</c> 且 <c>Max=(3,3)</c> 时，<c>Size=(2,2)</c>。</para>
         /// </summary>
         public abstract Rect2I CoordinateBounds { get; }

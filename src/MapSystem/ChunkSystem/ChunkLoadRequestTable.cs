@@ -32,7 +32,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem
         /// 空请求表。
         /// </summary>
         public static readonly ChunkLoadRequestTable EMPTY = new(
-            new PixelValuesArrayShape<ChunkStateNode>(new PointListShape(), Array.Empty<ChunkStateNode>()));
+            new PixelValuesArrayShape<ChunkStateNode>(new PointSequenceShape(), Array.Empty<ChunkStateNode>()));
 
 
         // ================================================================================

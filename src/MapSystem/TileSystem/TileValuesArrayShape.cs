@@ -17,12 +17,12 @@ namespace WorldWeaver.MapSystem.TileSystem
         /// <summary>
         /// 空的“带值”TileValueShape（空坐标 + 空值数组）。
         /// </summary>
-        public static readonly TileValuesArrayShape EMPTY_VALUED = new(new PointListShape(), Array.Empty<int>());
+        public static readonly TileValuesArrayShape EMPTY_VALUED = new(new PointSequenceShape(), Array.Empty<int>());
 
         /// <summary>
         /// 空的“仅坐标”TileValueShape（空坐标 + null 值数组）。
         /// </summary>
-        public static readonly TileValuesArrayShape EMPTY_COORDINATE_ONLY = new(new PointListShape());
+        public static readonly TileValuesArrayShape EMPTY_COORDINATE_ONLY = new(new PointSequenceShape());
 
         /// <summary>
         /// 与点序严格对齐的 TileRunId 数组。
@@ -55,7 +55,7 @@ namespace WorldWeaver.MapSystem.TileSystem
                 return EMPTY_VALUED;
             }
 
-            return new TileValuesArrayShape(new PointListShape(globalPositions), tileRunIds.ToArray());
+            return new TileValuesArrayShape(new PointSequenceShape(globalPositions), tileRunIds.ToArray());
         }
 
         /// <summary>
@@ -73,7 +73,7 @@ namespace WorldWeaver.MapSystem.TileSystem
                 return EMPTY_COORDINATE_ONLY;
             }
 
-            return new TileValuesArrayShape(new PointListShape(globalPositions));
+            return new TileValuesArrayShape(new PointSequenceShape(globalPositions));
         }
 
         /// <summary>
