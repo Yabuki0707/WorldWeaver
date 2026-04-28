@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using Godot;
 
@@ -8,8 +9,33 @@ namespace WorldWeaver.PixelShapeSystem
     /// <para>该类型只负责描述一个形状覆盖了哪些离散像素点，不承担地图局部坐标、数组索引等上层语义。</para>
     /// <para>所有子类都应保证其公开输出的全局坐标顺序稳定，以便与外部附加的数据数组保持一一对应关系。</para>
     /// </summary>
-    public abstract class PixelShape
+    public abstract class PixelShape : IReadOnlyCollection<Vector2I>
     {
+        // ================================================================================
+        //                                  IReadOnlyCollection<Vector2I>
+        // ================================================================================
+
+        /// <summary>
+        /// 图形当前覆盖的离散点数量。
+        /// </summary>
+        int IReadOnlyCollection<Vector2I>.Count => PointCount;
+
+        /// <summary>
+        /// 获取当前图形覆盖点的全局坐标迭代器。
+        /// </summary>
+        public IEnumerator<Vector2I> GetEnumerator()
+        {
+            return GetGlobalCoordinateIterator().GetEnumerator();
+        }
+
+        /// <summary>
+        /// 获取当前图形覆盖点的全局坐标迭代器（非泛型）。
+        /// </summary>
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return GetEnumerator();
+        }
+
         // ================================================================================
         //                                  基础属性
         // ================================================================================
