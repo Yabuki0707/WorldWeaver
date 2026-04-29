@@ -9,7 +9,7 @@ namespace WorldWeaver.PixelShapeSystem.QuadrangleShape
     /// <para>该形状使用左上角原点、宽度与高度实时推导覆盖的所有全局像素坐标。</para>
     /// <para>所有坐标输出都按从上到下、从左到右的顺序生成。</para>
     /// </summary>
-    public class RectangleShape : PixelShape, IGeometricPixelShape
+    public class RectangleShape : PixelShape, IGeometricPixelShape, IReadOnlyList<Vector2I>
     {
         // ================================================================================
         //                                  核心属性
@@ -49,6 +49,33 @@ namespace WorldWeaver.PixelShapeSystem.QuadrangleShape
         /// 图形当前覆盖的离散点数量。
         /// </summary>
         public override int PointCount => Width * Height;
+
+
+        // ================================================================================
+        //                                  IReadOnlyList<Vector2I>
+        // ================================================================================
+        
+
+        /// <summary>
+        /// 按从上到下、从左到右的稳定顺序获取指定索引处的全局坐标。
+        /// </summary>
+        /// <param name="index">全局坐标输出序列中的索引。</param>
+        public Vector2I this[int index]
+        {
+            get
+            {
+                if ((uint)index >= (uint)PointCount)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(index), "index 必须位于矩形覆盖点数量范围内。");
+                }
+
+                // 索引顺序与迭代器保持一致：先按行推进 Y，再在行内推进 X。
+                int offsetY = index / Width;
+                int offsetX = index - offsetY * Width;
+
+                return new Vector2I(Origin.X + offsetX, Origin.Y + offsetY);
+            }
+        }
 
 
         // ================================================================================
