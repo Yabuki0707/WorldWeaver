@@ -1,6 +1,6 @@
 using System;
 
-namespace WorldWeaver.PixelShapeSystem
+namespace WorldWeaver.PixelShapeSystem.ValueShape
 {
     /// <summary>
     /// 形状与值的组合区域。

@@ -1,4 +1,5 @@
 using WorldWeaver.PixelShapeSystem;
+using WorldWeaver.PixelShapeSystem.ValueShape;
 
 namespace WorldWeaver.MapSystem.TileSystem
 {

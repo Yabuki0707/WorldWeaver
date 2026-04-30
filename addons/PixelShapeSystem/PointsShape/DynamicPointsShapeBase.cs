@@ -72,6 +72,28 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
 
 
         // ================================================================================
+        //                                  IReadOnlyList<Vector2I>
+        // ================================================================================
+
+        /// <summary>
+        /// 按写入顺序获取指定索引处的全局坐标。
+        /// </summary>
+        /// <param name="index">全局坐标输出序列中的索引。</param>
+        public override Vector2I this[int index]
+        {
+            get
+            {
+                if ((uint)index >= (uint)points.Count)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(index), "index 必须位于点形状有效点数量范围内。");
+                }
+
+                return points[index];
+            }
+        }
+
+
+        // ================================================================================
         //                                  点追加方法
         // ================================================================================
 

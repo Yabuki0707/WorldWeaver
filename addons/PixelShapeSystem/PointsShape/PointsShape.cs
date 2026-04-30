@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Godot;
 
 namespace WorldWeaver.PixelShapeSystem.PointsShape
@@ -7,7 +8,7 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
     /// 点形状抽象基类。
     /// <para>用于暴露点形状的零复制坐标切片输出能力，并提供点形状共享的边界工具。</para>
     /// </summary>
-    public abstract class PointsShape : PixelShape
+    public abstract class PointsShape : PixelShape, IReadOnlyList<Vector2I>
     {
         /// <summary>
         /// 空点形状共用的错误坐标边界。
@@ -15,6 +16,27 @@ namespace WorldWeaver.PixelShapeSystem.PointsShape
         public static Rect2I EmptyCoordinateBounds { get; } = new(
             new Vector2I(int.MaxValue, int.MaxValue),
             new Vector2I(int.MinValue, int.MinValue));
+
+
+        // ================================================================================
+        //                                  IReadOnlyList<Vector2I>
+        // ================================================================================
+
+        /// <summary>
+        /// 当前点形状中的点数量。
+        /// </summary>
+        public int Count => PointCount;
+
+        /// <summary>
+        /// 按当前点形状的稳定输出顺序获取指定索引处的全局坐标。
+        /// </summary>
+        /// <param name="index">全局坐标输出序列中的索引。</param>
+        public abstract Vector2I this[int index] { get; }
+
+
+        // ================================================================================
+        //                                  Span输出
+        // ================================================================================
 
         /// <summary>
         /// 获取当前点形状的全局坐标只读切片。
