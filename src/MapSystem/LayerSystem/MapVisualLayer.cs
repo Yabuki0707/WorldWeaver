@@ -3,6 +3,7 @@ using WorldWeaver.MapSystem.ChunkSystem;
 using WorldWeaver.MapSystem.ChunkSystem.Data;
 using WorldWeaver.MapSystem.ChunkSystem.State;
 using WorldWeaver.MapSystem.TileSystem;
+using WorldWeaver.MapSystem.TileSystem.Manger;
 
 namespace WorldWeaver.MapSystem.LayerSystem
 {

@@ -52,6 +52,7 @@
     <Folder Include="addons\PixelShapeSystem\QuadrangleShape\" />
     <Folder Include="config\" />
     <Folder Include="src\MapSystem\ChunkSystem\Persistence\Region\ToolScript\" />
+    <Folder Include="src\MapSystem\TileSystem\Manger\" />
     <Folder Include="src\MapSystem\WorldSystem\" />
   </ItemGroup>
   <ItemGroup>

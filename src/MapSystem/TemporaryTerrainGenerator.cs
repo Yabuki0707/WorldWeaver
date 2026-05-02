@@ -1,6 +1,7 @@
 ﻿using System;
 using Godot;
 using WorldWeaver.MapSystem.TileSystem;
+using WorldWeaver.MapSystem.TileSystem.Manger;
 
 namespace WorldWeaver.MapSystem
 {

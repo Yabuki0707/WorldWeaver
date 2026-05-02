@@ -4,6 +4,7 @@ using WorldWeaver.MapSystem.ChunkSystem;
 using WorldWeaver.MapSystem.ChunkSystem.State;
 using WorldWeaver.MapSystem.LayerSystem;
 using WorldWeaver.MapSystem.TileSystem;
+using WorldWeaver.MapSystem.TileSystem.Manger;
 using WorldWeaver.PixelShapeSystem.PointsShape;
 using WorldWeaver.PixelShapeSystem.QuadrangleShape;
 using WorldWeaver.PixelShapeSystem.ValueShape;
