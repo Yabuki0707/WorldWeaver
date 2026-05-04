@@ -100,7 +100,7 @@ namespace WorldWeaver.MapSystem.TileSystem.Manger
                 return;
             }
 
-            int maxRunId = loadedTileTypes[loadedTileTypes.Length - 1].TileTypeRunId;
+            int maxRunId = loadedTileTypes[^1].TileTypeRunId;
             tileTypes = new TileType[maxRunId + 1];
             for (int i = 0; i < loadedTileTypes.Length; i++)
             {

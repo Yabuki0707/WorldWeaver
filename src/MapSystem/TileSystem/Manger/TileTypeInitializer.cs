@@ -25,9 +25,9 @@ namespace WorldWeaver.MapSystem.TileSystem.Manger
 
         /// <summary>
         /// 路径列表是否仍保持在初始化后的状态。
-        /// <para>调用 <c>-=</c> 运算符或 <see cref="ClearPaths"/> 方法后会变为 false。</para>
+        /// <para>任何影响路径的操作（<c>+=</c>、<c>-=</c>、<see cref="ClearPaths"/>）均置为 false，仅 <see cref="Initialize"/> 成功时置为 true。</para>
         /// </summary>
-        public bool IsPathListUnmodified { get; private set; } = true;
+        public bool IsPathListUnmodified { get; private set; }
 
         // ================================================================================
         //                                  运算符重载
@@ -41,6 +41,7 @@ namespace WorldWeaver.MapSystem.TileSystem.Manger
             if (initializer != null && !string.IsNullOrWhiteSpace(path))
             {
                 initializer._pathsCollection.Add(path);
+                initializer.IsPathListUnmodified = false;
             }
 
             return initializer;
@@ -160,6 +161,7 @@ namespace WorldWeaver.MapSystem.TileSystem.Manger
                 PrintLoadedTypes(tileTypeList);
             }
 
+            IsPathListUnmodified = true;
             return (tileTypeList.ToArray(), nameToRunIdBuilder.ToFrozenDictionary(), mappingHash);
         }
 
