@@ -42,6 +42,7 @@
     <Content Include="addons\PixelShapeSystem\PointsShape\README.md" />
     <Content Include="addons\PixelShapeSystem\README.md" />
     <Content Include="addons\Vector2IExtensions.cs.uid" />
+    <Content Include="ARCHITECTURE.md" />
     <Content Include="src\CODE_STYLE.md" />
     <Content Include="src\MapSystem\README.md" />
     <Content Include="src\MapSystem\TODO.md" />
@@ -50,7 +51,7 @@
   </ItemGroup>
   <ItemGroup>
     <Folder Include="addons\PixelShapeSystem\QuadrangleShape\" />
-    <Folder Include="config\" />
+    <Folder Include="mods\" />
     <Folder Include="src\MapSystem\ChunkSystem\Persistence\Region\ToolScript\" />
     <Folder Include="src\MapSystem\TileSystem\Manger\" />
     <Folder Include="src\MapSystem\WorldSystem\" />

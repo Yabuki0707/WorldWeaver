@@ -5,6 +5,7 @@
       <Path>addons/PixelShapeSystem</Path>
     </attachedFolders>
     <explicitIncludes>
+      <Path>ARCHITECTURE.md</Path>
       <Path>addons</Path>
       <Path>assets/tiles/deep_sea.json</Path>
       <Path>assets/tiles/grass.json</Path>
