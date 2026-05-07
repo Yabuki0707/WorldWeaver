@@ -1,7 +1,7 @@
 # WorldWeaver 架构文档
 
-**版本：1.0**
-**日期：2026-05-06**
+**版本：2.0**
+**日期：2026-05-07**
 
 ---
 
@@ -13,8 +13,8 @@ GameManager (场景根 Node)
 ├── ModManager (硬编码，不可替换)
 │   └── 扫描 mods/{mod}/ 目录，加载 vanilla 与社区模组
 │
-├── FrozenDictionary<string, IGlobalSystem> (全局 System 表)
-│   ├── SaveSystem        ← 香草注册，提供存档事件
+├── Systems: GlobalSystemsManager (全局 System 容器，术语称 GlobalSystems)
+│   ├── SaveManager      ← 香草注册，管理存档生命周期
 │   ├── ModManager 本身   ← 作为 System 之一注册
 │   └── ... (模组可注入)
 │
@@ -26,16 +26,16 @@ GameManager (场景根 Node)
 节点树结构：
 
 ```
-GameManager           ← 全局级，场景根 Node
-  └── SaveSystem      ← 全局 System 之一，管理存档生命周期
-        └── Save[]    ← 每个存档一个 Node 实例
-              ├── FrozenDictionary<string, ISaveSystem>
-              ├── World[]         ← 存档内可切换多个世界
-              │     └── Layer[]  ← 每个世界由多个图层组成
+GameManager              ← 全局级，场景根 Node
+  └── SaveManager        ← 全局 System，管理存档生命周期
+        └── Save[]       ← 每个存档一个 Node 实例
+              ├── Systems: SaveSystemsGroup  ← 存档级 System 容器（术语称 SaveSystems）
+              ├── World[]                    ← 存档内可切换多个世界
+              │     └── Layer[]              ← 每个世界由多个图层组成
               └── 存档事件 (创建/加载/卸载)
 ```
 
-> 本节仅标记节点树骨架，World/Layer 系统的详细设计留到后续阶段展开。
+> System 仅存在于全局和存档两级。World/Layer 不再有 System 容器，其详细设计留到后续阶段展开。
 
 ---
 
@@ -47,10 +47,12 @@ GameManager           ← 全局级，场景根 Node
 |------|------------------------------|-----------------------------------|
 | 接口   | `IGlobalSystem`              | `ISaveSystem`                     |
 | 基接口  | `IGameSystem`                | `IGameSystem`                     |
-| 持有者  | `GameManager`                | `Save`                            |
+| 容器类  | `GlobalSystemsManager`       | `SaveSystemsGroup`                |
+| 属性   | `GameManager.Systems`        | `Save.Systems`                    |
+| 术语   | GlobalSystems                | SaveSystems                       |
 | 生命周期 | 游戏进程绑定                       | 存档加载/卸载                           |
-| 注册方式 | `GlobalSystemRegistering` 事件 | Save 加载事件（通过 SaveSystem 广播）       |
-| 示例   | `SaveSystem`, `ModManager`   | `TileTypeManager`, `EntitySystem` |
+| 注册方式 | `GlobalSystemRegistering` 事件 | Save 加载事件（由 SaveManager 广播）       |
+| 示例   | `SaveManager`, `ModManager`  | `TileTypeManager`, `EntitySystem` |
 
 ### 2.2 IGameSystem
 
@@ -69,22 +71,22 @@ public interface IGameSystem
 ```
 GameManager._Ready()
   → 广播 GlobalSystemRegistering (IGlobalSystemRegistrar)
-    → 香草注册 SaveSystem, ModManager 等
+    → 香草硬编码注册 SaveManager, ModManager 等
     → 模组注册自定义 IGlobalSystem
-  → 收集所有 IGlobalSystem
+  → 收集所有 IGlobalSystem 至 GameManager.Systems (GlobalSystemsManager)
   → 拓扑排序（按 Prerequisites）
   → 逐个调用 OnGameStart()
   → 广播 GlobalSystemsInitialized
 ```
 
-存档流程（由 SaveSystem 管理）：
+存档流程（由 SaveManager 管理）：
 
 ```
-SaveSystem.CreateSave() 或 SaveSystem.LoadSave()
+SaveManager.CreateSave() 或 SaveManager.LoadSave()
   → 广播存档级注册事件 (ISaveSystemRegistrar)
     → 香草注册 TileTypeManager 等
     → 模组注册自定义 ISaveSystem
-  → 收集所有 ISaveSystem
+  → 收集所有 ISaveSystem 至 Save.Systems (SaveSystemsGroup)
   → 拓扑排序
   → 逐个调用 OnSaveLoad(ISaveContext)
 ```
@@ -95,14 +97,13 @@ SaveSystem.CreateSave() 或 SaveSystem.LoadSave()
 
 ### 3.1 GameManager 事件
 
-| 事件                         | 触发时机              | 参数                       | 说明                         |
-|----------------------------|-------------------|--------------------------|----------------------------|
-| `GlobalSystemRegistering`  | 游戏启动              | `IGlobalSystemRegistrar` | 香草与模组注册全局 System           |
-| `GlobalSystemsInitialized` | 全部全局 System 初始化完毕 | —                        | 订阅方此时可安全查询 `GlobalSystems` |
+| 事件                         | 触发时机              | 参数                       | 说明                             |
+|----------------------------|-------------------|--------------------------|--------------------------------|
+| `GlobalSystemRegistering`  | 游戏启动              | `IGlobalSystemRegistrar` | 香草与模组注册全局 System               |
+| `GlobalSystemsInitialized` | 全部全局 System 初始化完毕 | —                        | 订阅方此时可安全查询 GameManager.Systems |
+| `GameShuttingDown`         | 游戏关闭              | —                        | 清理前通知                          |
 
-**GameManager 不暴露存档相关事件。** 存档事件由 `SaveSystem` 独立管理。
-
-### 3.2 SaveSystem 事件
+### 3.2 SaveManager 事件
 
 | 事件              | 触发时机   | 参数                                     | 说明               |
 |-----------------|--------|----------------------------------------|------------------|
@@ -146,7 +147,7 @@ mods/                          ← 模组父目录
 GameManager._Ready()
   → ModManager 扫描 mods/ 目录
   → 按依赖排序模组（vanilla 固定最先）
-  → 遇到 vanilla 时：跳过 DLL 加载与 IMod 实例化，直接走硬编码初始化（注册 SaveSystem、TileTypeManager 等全局 System）
+  → 遇到 vanilla 时：跳过 DLL 加载与 IMod 实例化，直接走硬编码初始化（注册 SaveManager 等全局 System）
   → 社区模组：加载 DLL 程序集 → 加载 PCK 资源包 → 实例化入口类（IMod）→ 调用 OnLoad(IGameManager)
   → GlobalSystemRegistering 事件中，各 Mod 注册自己的 IGlobalSystem
   → 拓扑排序 + OnGameStart()
@@ -162,11 +163,8 @@ public interface IGameManager
     // 硬编码
     ModManager ModManager { get; }
 
-    // 全局 System 表（只读）
-    FrozenDictionary<string, IGlobalSystem> GlobalSystems { get; }
-
-    // 按名称获取全局 System
-    IGlobalSystem GetGlobalSystem(string systemName);
+    // 全局 System 容器
+    GlobalSystemsManager Systems { get; }
 
     // 事件
     event Action<IGlobalSystemRegistrar> GlobalSystemRegistering;
@@ -182,11 +180,8 @@ public interface IGameManager
 ```csharp
 public interface ISave : ISaveContext
 {
-    // 存档级 System 表
-    FrozenDictionary<string, ISaveSystem> SaveSystems { get; }
-
-    // 按名称获取存档级 System
-    ISaveSystem GetSaveSystem(string systemName);
+    // 存档级 System 容器
+    SaveSystemsGroup Systems { get; }
 
     // 事件
     event Action<ISaveSystemRegistrar> SaveCreating;
@@ -202,26 +197,27 @@ public interface ISave : ISaveContext
 
 ## 7. 关键设计决策
 
-1. **GameManager 只管全局**——存档相关事件归 `SaveSystem`，GameManager 不触碰存档逻辑
-2. **SaveSystem 是全局 System**——`ModManager` 加载香草时自动注册，模组可自由订阅其事件
-3. **事件广播 + 拓扑排序**——全局 System 与存档级 System 均走同一套注册+排序机制
-4. **入口收窄**——Mod 只拿到 `IGameManager`，通过事件注册 System，通过 `GetSystem<T>()` 在运行时获取已就绪的 System
-5. **Save 在结构上位于 Layer/World 之上一层**——当前架构只深入到存档层，更高层（World 间切换、多存档管理等）暂不涉及
-6. **香草硬编码**——香草不实现 IMod，其逻辑直接编译进主 DLL。ModManager 扫描到 vanilla 时跳过 DLL 加载与 IMod 实例化，直接走内置初始化流程注册 SaveSystem 等全局 System
+1. **香草硬编码**——香草不实现 IMod，其逻辑直接编译进主 DLL。ModManager 扫描到 vanilla 时跳过 DLL 加载与 IMod 实例化，直接走内置初始化流程注册 SaveManager 等全局 System
+2. **GameManager → Save → World → Layer 节点树**——骨架已定，System 仅存在于全局（GlobalSystems）和存档（SaveSystems）两级，World/Layer 不再设 System 容器
+3. **香草为骨、模组为肉**——香草提供核心 System 与事件广播点，模组通过订阅事件、注册自定义 System 进行扩展
+4. **事件广播 + 拓扑排序**——全局 System 与存档级 System 均走同一套注册 + 拓扑排序机制，按 Prerequisites 确定初始化顺序
+5. **入口收窄**——Mod 只拿到 `IGameManager`，通过事件与容器逐步获取下游对象（SaveManager、Save 等）
+6. **事件归属游戏对象自身**——事件不强制集中于某一处，各游戏对象按职责暴露自身事件
 
 ---
 
 ## 8. 相关文件
 
-| 文件                                 | 说明                |
-|------------------------------------|-------------------|
-| `config/IGameSystem.cs`            | System 基接口        |
-| `config/IGlobalSystem.cs`          | 全局 System 接口      |
-| `config/IGlobalSystemRegistrar.cs` | 全局 System 注册器     |
-| `config/ISaveSystem.cs`            | 存档级 System 接口     |
-| `config/ISaveSystemRegistrar.cs`   | 存档级 System 注册器    |
-| `config/ISaveContext.cs`           | 存档上下文接口           |
-| `src/CODE_STYLE.md`                | 代码风格规范            |
-| `src/PROJECT_STANDARD.md`          | 项目标准规范            |
-| `src/MapSystem/README.md`          | MapSystem 简介      |
-| `src/MapSystem/TODO.md`            | MapSystem TODO 列表 |
+| 文件                                        | 说明                |
+|-------------------------------------------|-------------------|
+| `config/System/IGameSystem.cs`            | System 基接口        |
+| `config/System/IGlobalSystem.cs`          | 全局 System 接口      |
+| `config/System/IGlobalSystemRegistrar.cs` | 全局 System 注册器     |
+| `config/System/ISaveSystem.cs`            | 存档级 System 接口     |
+| `config/System/ISaveSystemRegistrar.cs`   | 存档级 System 注册器    |
+| `config/System/ISaveContext.cs`           | 存档上下文接口           |
+| `config/IMod.cs`                          | Mod 入口接口          |
+| `src/CODE_STYLE.md`                       | 代码风格规范            |
+| `src/PROJECT_STANDARD.md`                 | 项目标准规范            |
+| `src/MapSystem/README.md`                 | MapSystem 简介      |
+| `src/MapSystem/TODO.md`                   | MapSystem TODO 列表 |
