@@ -1,4 +1,4 @@
-namespace WorldWeaver.Config
+namespace WorldWeaver.ModSystem
 {
     /// <summary>
     /// Mod 入口接口。

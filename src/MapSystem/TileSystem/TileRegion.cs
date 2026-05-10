@@ -1,3 +1,4 @@
+using System;
 using WorldWeaver.PixelShapeSystem;
 using WorldWeaver.PixelShapeSystem.ValueShape;
 
@@ -25,7 +26,7 @@ namespace WorldWeaver.MapSystem.TileSystem
         /// 使用现有的像素区域创建 Tile 区域。
         /// </summary>
         public TileRegion(PixelRegion<int> source) : base(
-            source?.Shape ?? throw new System.ArgumentNullException(nameof(source)),
+            source?.Shape ?? throw new ArgumentNullException(nameof(source)),
             source.Value)
         {
         }
