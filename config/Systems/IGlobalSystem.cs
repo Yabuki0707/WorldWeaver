@@ -10,16 +10,11 @@ namespace WorldWeaver.Systems
         /// <summary>
         /// 一次性声明前置依赖。传入当前已声明的全局 System 表，返回依赖名称。
         /// </summary>
-        string[] GetPrerequisites(IDictionary<string, IGlobalSystem> declaredSystems);
+        string[] GetGlobalSystemPrerequisites(Dictionary<string, IGlobalSystem> declaredSystems);
 
         /// <summary>
         /// 初始化本 System。传入的注册表完整包含所有前置依赖。
         /// </summary>
-        void Initialize(IDictionary<string, IGlobalSystem> registry);
-
-        /// <summary>
-        /// 按名称查询同级全局 System。内部委托至容器的双 Key 索引器。
-        /// </summary>
-        IGlobalSystem GetGlobalSystem(string systemName);
+        void Initialize(Dictionary<string, IGlobalSystem> registry);
     }
 }

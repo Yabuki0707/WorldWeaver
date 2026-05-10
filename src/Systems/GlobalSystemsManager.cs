@@ -29,6 +29,14 @@ namespace WorldWeaver.Systems
         public string SystemName => "GlobalSystemsManager";
 
         /// <summary>
+        /// 容器以自身为 visitor 查询——供各 System 的 GetGlobalSystem 委托至此处。
+        /// </summary>
+        IGameSystem IGameSystem.GetGlobalSystem(string systemName)
+        {
+            return GetGlobalSystem(this, systemName);
+        }
+
+        /// <summary>
         /// 容器卸载——与游戏进程同生命周期。
         /// </summary>
         void IGameSystem.Uninstall()
@@ -128,7 +136,7 @@ namespace WorldWeaver.Systems
         /// <summary>
         /// 执行完整的初始化流程：
         /// <para>1. 广播 GlobalSystemRegistering 事件（收集声明表）</para>
-        /// <para>2. 调用各 System 的 GetPrerequisites 构建注册表</para>
+        /// <para>2. 调用各 System 的 GetGlobalSystemPrerequisites 构建注册表</para>
         /// <para>3. 拓扑排序</para>
         /// <para>4. 按序逐个调用 IGlobalSystem.Initialize，同时填充系统表</para>
         /// <para>5. 标记 IsInitialized，清空声明表</para>
@@ -155,15 +163,15 @@ namespace WorldWeaver.Systems
         }
 
         /// <summary>
-        /// 遍历声明表，调用各 System 的 GetPrerequisites 构建注册表。
-        /// 声明表类型与 GetPrerequisites 入参一致，无需包装转换。
+        /// 遍历声明表，调用各 System 的 GetGlobalSystemPrerequisites 构建注册表。
+        /// 声明表类型与入参一致，无需包装转换。
         /// </summary>
         private Dictionary<IGlobalSystem, string[]> BuildRegistrationTable()
         {
             Dictionary<IGlobalSystem, string[]> registrationTable = new();
             foreach (IGlobalSystem system in _declared.Values)
             {
-                string[] prerequisites = system.GetPrerequisites(_declared);
+                string[] prerequisites = system.GetGlobalSystemPrerequisites(_declared);
                 registrationTable[system] = prerequisites;
             }
 
