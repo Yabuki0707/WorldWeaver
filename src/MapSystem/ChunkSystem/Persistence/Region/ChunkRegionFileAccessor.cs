@@ -106,12 +106,8 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
 				return false;
 			}
 
-			bool creatorLockEntered = false;
-			try
+			using (ChunkRegionCreatorLockTable.Lock(regionFilePath))
 			{
-				ChunkRegionCreatorLockTable.EnterRegionLock(regionFilePath);
-				creatorLockEntered = true;
-
 				alreadyExists = File.Exists(regionFilePath);
 				if (alreadyExists)
 				{
@@ -119,13 +115,6 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
 				}
 
 				return ChunkRegionCreator.Create(regionFilePath);
-			}
-			finally
-			{
-				if (creatorLockEntered)
-				{
-					ChunkRegionCreatorLockTable.ExitRegionLock(regionFilePath);
-				}
 			}
 		}
 

@@ -1,32 +1,23 @@
+using System;
+
 namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
 {
     /// <summary>
-    /// ChunkRegion 创建锁表。
-    /// <para>该静态类对外暴露 creator 锁语义，内部通过路径锁映射维护实际锁项。</para>
+    /// Region 创建锁表。对指定路径的 region 文件提供互斥锁，防止并发创建同一文件。
     /// </summary>
     public static class ChunkRegionCreatorLockTable
     {
-        private const string OWNER_NAME = "ChunkRegionCreatorLockTable";
+        /// <summary>
+        /// 锁映射实例。
+        /// </summary>
+        private static readonly ChunkRegionPathLockMap _lockMap = new();
 
         /// <summary>
-        /// creator 锁对应的路径锁映射。
+        /// 锁定指定 region 文件，返回释放句柄。
         /// </summary>
-        private static readonly ChunkRegionPathLockMap _LOCK_MAP = new();
-
-        /// <summary>
-        /// 进入指定 region 文件路径对应的 creator 锁。
-        /// </summary>
-        public static void EnterRegionLock(string regionFilePath)
+        public static IDisposable Lock(string regionFilePath)
         {
-            _LOCK_MAP.Enter(regionFilePath, OWNER_NAME);
-        }
-
-        /// <summary>
-        /// 退出指定 region 文件路径对应的 creator 锁。
-        /// </summary>
-        public static void ExitRegionLock(string regionFilePath)
-        {
-            _LOCK_MAP.Exit(regionFilePath, OWNER_NAME);
+            return _lockMap.Lock(regionFilePath);
         }
     }
 }

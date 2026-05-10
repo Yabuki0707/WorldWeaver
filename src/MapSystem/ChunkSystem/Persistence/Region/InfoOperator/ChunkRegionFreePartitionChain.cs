@@ -23,9 +23,14 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region.InfoOperator
             private readonly string _regionFilePath;
 
             /// <summary>
+            /// 锁句柄，非空时表示当前已持有 region 锁且内存状态未写回。
+            /// </summary>
+            private IDisposable _lockHandle;
+
+            /// <summary>
             /// 当前内存状态是否已经与文件头保持同步。
             /// </summary>
-            public bool IsFlushed { get; private set; } = true;
+            public bool IsFlushed => _lockHandle == null;
 
             public FlushLockState(string regionFilePath)
             {
@@ -35,7 +40,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region.InfoOperator
             /// <summary>
             /// 在首次进入 dirty 状态时获取 region 锁。
             /// </summary>
-            public bool TryMarkDirty(string callerName)
+            public bool TryMarkDirty()
             {
                 if (!IsFlushed)
                 {
@@ -44,13 +49,12 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region.InfoOperator
 
                 try
                 {
-                    ChunkRegionFreePartitionLockTable.EnterRegionLock(_regionFilePath);
-                    IsFlushed = false;
+                    _lockHandle = ChunkRegionFreePartitionLockTable.Lock(_regionFilePath);
                     return true;
                 }
                 catch (Exception exception)
                 {
-                    GD.PushError($"[ChunkRegionFreePartitionChain] {callerName}: 获取 region 空闲分区锁失败: {exception.Message}");
+                    GD.PushError($"[ChunkRegionFreePartitionChain] 获取空闲分区锁失败: {exception.Message}");
                     return false;
                 }
             }
@@ -58,7 +62,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region.InfoOperator
             /// <summary>
             /// 在完成写回后释放 region 锁并回到 clean 状态。
             /// </summary>
-            public bool TryClean(string callerName)
+            public bool TryClean()
             {
                 if (IsFlushed)
                 {
@@ -67,13 +71,13 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region.InfoOperator
 
                 try
                 {
-                    ChunkRegionFreePartitionLockTable.ExitRegionLock(_regionFilePath);
-                    IsFlushed = true;
+                    _lockHandle?.Dispose();
+                    _lockHandle = null;
                     return true;
                 }
                 catch (Exception exception)
                 {
-                    GD.PushError($"[ChunkRegionFreePartitionChain] {callerName}: 释放 region 空闲分区锁失败: {exception.Message}");
+                    GD.PushError($"[ChunkRegionFreePartitionChain] 释放空闲分区锁失败: {exception.Message}");
                     return false;
                 }
             }
@@ -243,7 +247,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region.InfoOperator
                     FreePartitionState = oldFreePartitionState;
                     if (oldIsFlushed)
                     {
-                        _flushLockState.TryClean(nameof(GetFreePartitionList));
+                        _flushLockState.TryClean();
                     }
                     return null;
                 }
@@ -254,7 +258,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region.InfoOperator
                     FreePartitionState = oldFreePartitionState;
                     if (oldIsFlushed)
                     {
-                        _flushLockState.TryClean(nameof(GetFreePartitionList));
+                        _flushLockState.TryClean();
                     }
                     return null;
                 }
@@ -304,7 +308,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region.InfoOperator
                     return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
                 }
 
-                if (!_flushLockState.TryMarkDirty(nameof(TakeHeadPartition)))
+                if (!_flushLockState.TryMarkDirty())
                 {
                     return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
                 }
@@ -321,7 +325,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region.InfoOperator
                 return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
             }
 
-            if (!_flushLockState.TryMarkDirty(nameof(TakeHeadPartition)))
+            if (!_flushLockState.TryMarkDirty())
             {
                 return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
             }
@@ -344,7 +348,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region.InfoOperator
                 return FreePartitionState;
             }
 
-            if (!_flushLockState.TryMarkDirty(nameof(RegisterHeadPartition)))
+            if (!_flushLockState.TryMarkDirty())
             {
                 return FreePartitionState;
             }
@@ -413,7 +417,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region.InfoOperator
                 return false;
             }
 
-            return _flushLockState.TryClean(nameof(FlushStateToFile));
+            return _flushLockState.TryClean();
         }
 
         /// <summary>
@@ -474,7 +478,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region.InfoOperator
             }
 
             GD.PushError("[ChunkRegionFreePartitionChain] Dispose: 写回空闲分区头状态失败，将直接执行 clean 流程以避免锁泄漏。");
-            _flushLockState.TryClean(nameof(Dispose));
+            _flushLockState.TryClean();
         }
     }
 }

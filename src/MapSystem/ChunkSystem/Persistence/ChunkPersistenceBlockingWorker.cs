@@ -195,15 +195,10 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                     return CreateGroupFailure(taskGroup, "无法生成 region 文件路径。");
                 }
 
-                bool regionLockEntered = false;
-                try
+                // 一个 Store 任务组内的 chunk 共享一次空闲分区锁与 writer 打开。
+                using (ChunkRegionFreePartitionLockTable.Lock(regionFilePath))
+                using (ChunkRegionWriter regionWriter = ChunkRegionWriter.Open(_rootPath, regionPosition))
                 {
-                    // 一个 Store 任务组内的 chunk 共享一次空闲分区链操作，必须持有同一 region 的空闲分区锁。
-                    ChunkRegionFreePartitionLockTable.EnterRegionLock(regionFilePath);
-                    regionLockEntered = true;
-
-                    // writer 只负责具体 region 写入，外层已经保证 region 文件存在并持有空闲分区锁。
-                    using ChunkRegionWriter regionWriter = ChunkRegionWriter.Open(_rootPath, regionPosition);
                     if (regionWriter == null)
                     {
                         return CreateGroupFailure(taskGroup, "无法打开 region 写入器。");
@@ -248,14 +243,6 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                     }
 
                     return results;
-                }
-                finally
-                {
-                    if (regionLockEntered)
-                    {
-                        // 锁只覆盖本任务组的 region 写入窗口，避免长期占用空闲分区锁。
-                        ChunkRegionFreePartitionLockTable.ExitRegionLock(regionFilePath);
-                    }
                 }
             }
             catch (IOException exception)
