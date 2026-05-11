@@ -46,7 +46,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
                 return false;
             }
 
-            ChunkRegionHeaderOperator.ChunkHeaderData? chunkHeaderData =
+            ChunkHeaderData? chunkHeaderData =
                 ChunkRegionHeaderOperator.ReadChunkHeaderData(Stream, localChunkPosition);
             if (!chunkHeaderData.HasValue)
             {
@@ -84,7 +84,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
         /// <summary>
         /// 根据头数据读取整条分区链中的压缩字节。
         /// </summary>
-        private byte[] ReadChunkCompressedBytes(ChunkRegionHeaderOperator.ChunkHeaderData chunkHeaderData)
+        private byte[] ReadChunkCompressedBytes(ChunkHeaderData chunkHeaderData)
         {
             int partitionCount = checked((int)chunkHeaderData.PartitionCount);
             // 总长度由“前 N-1 个满载分区 + 最后一个分区有效长度”推导，避免逐分区累加时重复分配。

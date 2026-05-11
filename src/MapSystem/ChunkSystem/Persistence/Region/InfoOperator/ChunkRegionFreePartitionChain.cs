@@ -1,6 +1,5 @@
 using System;
 using System.Buffers.Binary;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using Godot;
@@ -8,477 +7,334 @@ using Godot;
 namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region.InfoOperator
 {
     /// <summary>
-    /// ChunkRegion 空闲分区链。
-    /// <para>该类型负责维护当前 region 文件中的空闲分区头状态，并基于分区 next 指针执行活链读取、取头、头插与头状态写回。</para>
-    /// <para>该实例采用“变脏时上锁、清洁时解锁”的策略：只有当内存中的头状态与文件头不一致时，才持有 region 锁。</para>
+    /// Region 文件内的空闲分区链。
+    /// <para>构造时获取文件锁并从头数据区读取空闲分区状态；Dispose 时写回头状态、冲刷文件并释放锁。</para>
+    /// <para>内部以 <see cref="FreePartitionState"/> 作为内存快照，HeadIndex / Count 均从该状态取值。</para>
+    /// <para>取走分区时采用"先遍历收集、确认无环后再更新头状态"的策略，避免中途失败已修改 <see cref="_state"/> 无法回滚。</para>
     /// </summary>
-    public sealed class ChunkRegionFreePartitionChain : IEnumerable<uint>, IDisposable
+    public sealed class ChunkRegionFreePartitionChain : IDisposable
     {
         /// <summary>
-        /// 空闲分区链的写回状态与 region 锁状态。
-        /// <para>该类型负责维护“当前是否已写回”这一状态，并统一处理变脏时加锁、清洁时解锁。</para>
+        /// 当前操作的 region 文件流，构造时注入，整个生命周期内只读。
         /// </summary>
-        private sealed class FlushLockState
-        {
-            private readonly string _regionFilePath;
-
-            /// <summary>
-            /// 锁句柄，非空时表示当前已持有 region 锁且内存状态未写回。
-            /// </summary>
-            private IDisposable _lockHandle;
-
-            /// <summary>
-            /// 当前内存状态是否已经与文件头保持同步。
-            /// </summary>
-            public bool IsFlushed => _lockHandle == null;
-
-            public FlushLockState(string regionFilePath)
-            {
-                _regionFilePath = regionFilePath;
-            }
-
-            /// <summary>
-            /// 在首次进入 dirty 状态时获取 region 锁。
-            /// </summary>
-            public bool TryMarkDirty()
-            {
-                if (!IsFlushed)
-                {
-                    return true;
-                }
-
-                try
-                {
-                    _lockHandle = ChunkRegionFreePartitionLockTable.Lock(_regionFilePath);
-                    return true;
-                }
-                catch (Exception exception)
-                {
-                    GD.PushError($"[ChunkRegionFreePartitionChain] 获取空闲分区锁失败: {exception.Message}");
-                    return false;
-                }
-            }
-
-            /// <summary>
-            /// 在完成写回后释放 region 锁并回到 clean 状态。
-            /// </summary>
-            public bool TryClean()
-            {
-                if (IsFlushed)
-                {
-                    return true;
-                }
-
-                try
-                {
-                    _lockHandle?.Dispose();
-                    _lockHandle = null;
-                    return true;
-                }
-                catch (Exception exception)
-                {
-                    GD.PushError($"[ChunkRegionFreePartitionChain] 释放空闲分区锁失败: {exception.Message}");
-                    return false;
-                }
-            }
-        }
-
         private readonly FileStream _stream;
-        private readonly FlushLockState _flushLockState;
 
         /// <summary>
-        /// 当前内存中的空闲分区头状态是否已经与文件头保持同步。
-        /// <para>当该值为 false 时，表示实例已经进入 region 锁，且仍有待写回的头状态变更。</para>
+        /// 标准化后的 region 文件路径，用于获取文件锁与日志上下文。
         /// </summary>
-        public bool IsFlushed => _flushLockState.IsFlushed;
+        private readonly string _regionFilePath;
 
         /// <summary>
-        /// 当前内存中的空闲分区头状态快照。
-        /// <para>所有对空闲分区链头的修改都先落在该内存状态上，随后再通过 <see cref="FlushStateToFile"/> 写回文件。</para>
+        /// 文件级互斥锁句柄，构造时获取，Dispose 时释放。
+        /// <para>锁覆盖整个空闲链实例的生命周期，确保内存快照与文件头状态在操作期间不被其他线程修改。</para>
         /// </summary>
-        public ChunkRegionHeaderOperator.FreePartitionState FreePartitionState { get; private set; }
+        private readonly IDisposable _lockHandle;
 
         /// <summary>
-        /// 当前空闲分区数量。
+        /// 空闲分区头状态的内存快照。所有对 HeadIndex / Count 的读写均通过该字段完成。
         /// </summary>
-        public uint FreePartitionCount => FreePartitionState.FreePartitionCount;
+        private FreePartitionState _state;
+
+        // ================================================================================
+        //                              属性
+        // ================================================================================
 
         /// <summary>
-        /// 当前空闲分区链头索引。
+        /// 空闲分区链头索引。
         /// </summary>
-        public uint HeadPartitionIndex => FreePartitionState.HeadFreePartitionIndex;
+        public uint HeadIndex => _state.HeadFreePartitionIndex;
 
         /// <summary>
-        /// 通过读取文件头状态创建空闲分区链实例。
+        /// 空闲分区数量。
         /// </summary>
-        public static ChunkRegionFreePartitionChain Create(FileStream stream)
+        public uint Count => _state.FreePartitionCount;
+
+        // ================================================================================
+        //                              操作符
+        // ================================================================================
+
+        /// <summary>
+        /// 注册一组空闲分区到头链，返回是否全部成功。
+        /// <para>等价于 <see cref="RegisterHeadPartitions"/>。</para>
+        /// </summary>
+        public static bool operator +(ChunkRegionFreePartitionChain chain, uint[] indices)
         {
-            if (stream == null)
-            {
-                GD.PushError("[ChunkRegionFreePartitionChain] Create: stream 不能为空。");
-                return null;
-            }
-
-            string regionFilePath = stream.Name;
-            if (string.IsNullOrWhiteSpace(regionFilePath))
-            {
-                GD.PushError("[ChunkRegionFreePartitionChain] Create: 无法从 stream 获取有效的 region 文件路径。");
-                return null;
-            }
-
-            if (!ChunkRegionHeaderOperator.TryReadFreePartitionState(stream, out ChunkRegionHeaderOperator.FreePartitionState freePartitionState))
-            {
-                GD.PushError("[ChunkRegionFreePartitionChain] Create: 读取空闲分区头状态失败。");
-                return null;
-            }
-
-            if (!IsFreePartitionStateValid(stream, freePartitionState))
-            {
-                GD.PushError("[ChunkRegionFreePartitionChain] Create: 读取到的空闲分区头状态非法。");
-                return null;
-            }
-
-            return new ChunkRegionFreePartitionChain(stream, freePartitionState, regionFilePath);
+            return chain.RegisterHeadPartitions(indices);
         }
+
+        /// <summary>
+        /// 注册单个空闲分区到头链，返回是否成功。
+        /// <para>等价于 <see cref="RegisterHeadPartition"/>。</para>
+        /// </summary>
+        public static bool operator +(ChunkRegionFreePartitionChain chain, uint index)
+        {
+            return chain.RegisterHeadPartition(index);
+        }
+
+        /// <summary>
+        /// 取走指定数量的空闲分区，返回索引数组。
+        /// <para>等价于 <see cref="TakeOutFreePartitions"/>。不足或异常时返回 null。</para>
+        /// </summary>
+        public static uint[] operator -(ChunkRegionFreePartitionChain chain, int takeCount)
+        {
+            return chain.TakeOutFreePartitions(takeCount);
+        }
+
+        // ================================================================================
+        //                              构造与销毁
+        // ================================================================================
 
         /// <summary>
         /// 构造空闲分区链实例。
+        /// <para>流程：获取 region 空闲分区锁 → 读取文件中的空闲分区头状态 → 校验状态合法性 → 缓存到 <see cref="_state"/>。</para>
+        /// <para>若读取失败或状态非法则抛出异常，由上层决定是否终止当前操作。</para>
         /// </summary>
-        private ChunkRegionFreePartitionChain(
-            FileStream stream,
-            ChunkRegionHeaderOperator.FreePartitionState freePartitionState,
-            string regionFilePath)
+        /// <param name="stream">已打开的 region 文件流，必须可读写且已通过格式校验。</param>
+        public ChunkRegionFreePartitionChain(FileStream stream)
         {
-            _stream = stream;
-            _flushLockState = new FlushLockState(regionFilePath);
-            FreePartitionState = freePartitionState;
+            _stream = stream ?? throw new ArgumentNullException(nameof(stream));
+
+            _regionFilePath = stream.Name;
+            if (string.IsNullOrWhiteSpace(_regionFilePath))
+            {
+                throw new ArgumentException(
+                    "[ChunkRegionFreePartitionChain] 无法从 stream 获取有效的 region 文件路径。");
+            }
+
+            // 构造即加锁，确保该实例整个生命周期内空闲分区头不被并发修改。
+            _lockHandle = ChunkRegionFreePartitionLockTable.Lock(_regionFilePath);
+
+            // 读取文件头中的空闲分区状态（HeadFreePartitionIndex + FreePartitionCount）。
+            if (!ChunkRegionHeaderOperator.TryReadFreePartitionState(stream, out FreePartitionState state))
+            {
+                throw new InvalidOperationException(
+                    "[ChunkRegionFreePartitionChain] 读取空闲分区头状态失败。");
+            }
+
+            // 校验读取到的状态与当前文件分区总量是否一致。
+            if (!IsStateValid(stream, state))
+            {
+                throw new InvalidOperationException(
+                    "[ChunkRegionFreePartitionChain] 空闲分区头状态非法。");
+            }
+
+            _state = state;
         }
 
         /// <summary>
-        /// 判断指定空闲分区头状态是否合法。
-        /// <para>该方法只校验头状态与当前文件分区总量是否一致，不负责验证整条 free chain 是否存在环或提前结束。</para>
+        /// 销毁实例：将当前内存中的头状态写回文件 → 强制冲刷 → 释放文件锁。
+        /// <para>冲刷失败不会阻止锁释放（锁泄漏比数据丢失更严重）。</para>
         /// </summary>
-        public static bool IsFreePartitionStateValid(
-            FileStream stream,
-            ChunkRegionHeaderOperator.FreePartitionState freePartitionState)
+        public void Dispose()
         {
-            uint allocatedPartitionCount = ChunkRegionPartitionOperator.GetAllocatedPartitionCount(stream);
-            if (freePartitionState.HeadFreePartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL)
+            try
             {
-                return freePartitionState.FreePartitionCount == 0;
+                // 写回文件头中的空闲分区状态（HeadFreePartitionIndex + FreePartitionCount）。
+                ChunkRegionHeaderOperator.WriteFreePartitionState(_stream, _state);
+                // 确保数据落盘后再释放锁，避免其他线程读到半写状态。
+                _stream.Flush(true);
             }
-
-            if (freePartitionState.FreePartitionCount == 0)
+            finally
             {
-                return false;
-            }
-
-            if (freePartitionState.FreePartitionCount > allocatedPartitionCount)
-            {
-                return false;
-            }
-
-            return freePartitionState.HeadFreePartitionIndex < allocatedPartitionCount;
-        }
-
-        /// <summary>
-        /// 使用快慢指针法判断指定空闲分区链是否成环。
-        /// <para>该方法只回答“是否成环”，不负责校验头状态记录的数量是否与整链长度完全一致。</para>
-        /// </summary>
-        public static bool IsFreePartitionListChainCyclic(
-            FileStream stream,
-            ChunkRegionHeaderOperator.FreePartitionState freePartitionState)
-        {
-            if (!IsFreePartitionStateValid(stream, freePartitionState)) return false;
-            if (freePartitionState.FreePartitionCount == 0) return false;
-
-            uint slowPartitionIndex = freePartitionState.HeadFreePartitionIndex;
-            uint fastPartitionIndex = freePartitionState.HeadFreePartitionIndex;
-            while (true)
-            {
-                // 慢指针每轮前进一步，用于与快指针比较是否相遇。
-                if (!ChunkRegionPartitionOperator.TryReadValidatedNextPartitionIndex(stream, slowPartitionIndex, out slowPartitionIndex)) return false;
-
-                // 快指针第一次前进；若此时已经到达链尾，说明当前链可正常结束而非成环。
-                if (!ChunkRegionPartitionOperator.TryReadValidatedNextPartitionIndex(stream, fastPartitionIndex, out fastPartitionIndex)) return false;
-                if (fastPartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL) return false;
-
-                // 快指针第二次前进；依然能走到链尾则说明不是环，若与慢指针相遇则说明成环。
-                if (!ChunkRegionPartitionOperator.TryReadValidatedNextPartitionIndex(stream, fastPartitionIndex, out fastPartitionIndex)) return false;
-                if (fastPartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL) return false;
-                if (slowPartitionIndex == fastPartitionIndex) return true;
+                // 无论写回是否成功，都必须释放锁，防止死锁扩散。
+                _lockHandle.Dispose();
             }
         }
 
+        // ================================================================================
+        //                              取走空闲分区
+        // ================================================================================
+
         /// <summary>
-        /// 获取指定数量的空闲分区列表，并同步更新内存中的头状态。
-        /// <para>该方法只在成功时保留新的头状态；若链成环、越界或数量不足，则会把内存状态回滚到调用前快照。</para>
+        /// 从空闲链头取走指定数量的分区，返回索引数组。
+        /// <para>策略：先遍历链收集目标索引，用 HashSet 防环；遍历全部成功后才更新 <see cref="_state"/>，
+        /// 避免中途失败后内存快照已部分修改无法回滚。</para>
         /// </summary>
-        public uint[] GetFreePartitionList(int takePartitionCount)
+        /// <param name="takeCount">需要取走的分区数量。</param>
+        /// <returns>成功时返回长度为 takeCount 的索引数组；失败时返回 null。</returns>
+        public uint[] TakeOutFreePartitions(int takeCount)
         {
-            if (takePartitionCount <= 0)
+            if (takeCount <= 0)
             {
-                GD.PushError($"[ChunkRegionFreePartitionChain] GetFreePartitionList: takePartitionCount={takePartitionCount} 非法。");
+                GD.PushError(
+                    $"[ChunkRegionFreePartitionChain] TakeOutFreePartitions: takeCount={takeCount} 非法。");
                 return null;
             }
 
-            if (!IsFreePartitionStateValid(_stream, FreePartitionState))
+            if (_state.FreePartitionCount < (uint)takeCount)
             {
-                GD.PushError("[ChunkRegionFreePartitionChain] GetFreePartitionList: 当前空闲分区头状态非法。");
+                GD.PushError(
+                    $"[ChunkRegionFreePartitionChain] TakeOutFreePartitions: 空闲分区不足（需要 {takeCount}，当前 {_state.FreePartitionCount}）。");
                 return null;
             }
 
-            if (FreePartitionCount < (uint)takePartitionCount)
+            // —————— 遍历链，收集索引，校验环与边界 ——————
+            uint[] resultIndices = new uint[takeCount];
+            // 防环：记录已访问的分区索引，发现重复即报环。
+            HashSet<uint> visitedIndices = new(takeCount);
+            uint current = _state.HeadFreePartitionIndex;
+            for (int i = 0; i < takeCount; i++)
             {
-                GD.PushError($"[ChunkRegionFreePartitionChain] GetFreePartitionList: 当前空闲分区数量 {FreePartitionCount} 不足以提供 {takePartitionCount} 个分区。");
-                return null;
-            }
-
-            // 先保存调用前的内存快照；一旦中途失败，需要把内存状态和脏/净状态都恢复回去。
-            ChunkRegionHeaderOperator.FreePartitionState oldFreePartitionState = FreePartitionState;
-            bool oldIsFlushed = IsFlushed;
-            uint[] freePartitionList = new uint[takePartitionCount];
-            HashSet<uint> visitedPartitionIndices = new(takePartitionCount);
-            for (int i = 0; i < takePartitionCount; i++)
-            {
-                uint freePartitionIndex = TakeHeadPartition();
-                if (freePartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL)
+                // 索引越界检查（非首轮时也是对上一轮 next 的后验）。
+                if (!ChunkRegionPartitionOperator.IsPartitionIndexInRange(_stream, current))
                 {
-                    FreePartitionState = oldFreePartitionState;
-                    if (oldIsFlushed)
-                    {
-                        _flushLockState.TryClean();
-                    }
+                    GD.PushError(
+                        $"[ChunkRegionFreePartitionChain] TakeOutFreePartitions: 分区索引 {current} 越界。");
                     return null;
                 }
 
-                if (!visitedPartitionIndices.Add(freePartitionIndex))
+                // 环检测：同一条链内不应出现重复节点。
+                if (!visitedIndices.Add(current))
                 {
-                    GD.PushError("[ChunkRegionFreePartitionChain] GetFreePartitionList: 空闲分区链存在循环或重复节点。");
-                    FreePartitionState = oldFreePartitionState;
-                    if (oldIsFlushed)
-                    {
-                        _flushLockState.TryClean();
-                    }
+                    GD.PushError(
+                        "[ChunkRegionFreePartitionChain] TakeOutFreePartitions: 空闲分区链存在循环或重复节点。");
                     return null;
                 }
 
-                freePartitionList[i] = freePartitionIndex;
-            }
-
-            return freePartitionList;
-        }
-
-        /// <summary>
-        /// 从空闲分区链头取出一个空闲分区。
-        /// <para>该方法只修改内存中的头状态；真正的文件头写回由 <see cref="FlushStateToFile"/> 统一负责。</para>
-        /// </summary>
-        public uint TakeHeadPartition()
-        {
-            if (!IsFreePartitionStateValid(_stream, FreePartitionState))
-            {
-                GD.PushError("[ChunkRegionFreePartitionChain] TakeHeadPartition: 当前空闲分区头状态非法。");
-                return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
-            }
-
-            if (FreePartitionCount == 0)
-            {
-                GD.PushError("[ChunkRegionFreePartitionChain] TakeHeadPartition: 当前没有可取出的空闲分区。");
-                return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
-            }
-
-            uint currentHeadPartitionIndex = HeadPartitionIndex;
-            if (!ChunkRegionPartitionOperator.IsPartitionIndexInRange(_stream, currentHeadPartitionIndex))
-            {
-                GD.PushError($"[ChunkRegionFreePartitionChain] TakeHeadPartition: 头分区索引 {currentHeadPartitionIndex} 超出已分配范围。");
-                return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
-            }
-
-            if (!ChunkRegionPartitionOperator.TryReadValidatedNextPartitionIndex(_stream, currentHeadPartitionIndex, out uint nextHeadPartitionIndex))
-            {
-                GD.PushError("[ChunkRegionFreePartitionChain] TakeHeadPartition: 读取头分区 next 索引失败。");
-                return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
-            }
-
-            if (FreePartitionCount == 1)
-            {
-                if (nextHeadPartitionIndex != ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL)
+                // 统一读取原始 next——若下一轮仍在本循环内，越界会被 IsPartitionIndexInRange 截住。
+                if (!ChunkRegionPartitionOperator.TryReadRawPartitionNextIndex(
+                        _stream, current, out uint next))
                 {
-                    GD.PushError("[ChunkRegionFreePartitionChain] TakeHeadPartition: 单节点空闲链尾部未写入哨兵值。");
-                    return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
+                    return null;
                 }
 
-                if (!_flushLockState.TryMarkDirty())
+                resultIndices[i] = current;
+                current = next;
+            }
+
+            // —————— 遍历成功：更新内存快照 ——————
+            uint newFreePartitionCount = _state.FreePartitionCount - (uint)takeCount;
+            // 取走后若非空链——头数据记录的 FreePartitionCount 与实际链长不一致即为数据异常。
+            if (newFreePartitionCount > 0)
+            {
+                if (current == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL)
                 {
-                    return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
+                    GD.PushError(
+                        "[ChunkRegionFreePartitionChain] TakeOutFreePartitions: 空闲分区头数据异常——FreePartitionCount 未归零但实际链已耗尽。");
+                    return null;
                 }
 
-                FreePartitionState = new ChunkRegionHeaderOperator.FreePartitionState(
-                    ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL,
-                    0);
-                return currentHeadPartitionIndex;
+                if (!ChunkRegionPartitionOperator.IsPartitionIndexInRange(_stream, current))
+                {
+                    GD.PushError(
+                        $"[ChunkRegionFreePartitionChain] TakeOutFreePartitions: 空闲分区头数据异常——下一链头 {current} 越界，FreePartitionCount 与实际链结构不一致。");
+                    return null;
+                }
             }
 
-            if (nextHeadPartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL)
-            {
-                GD.PushError("[ChunkRegionFreePartitionChain] TakeHeadPartition: 空闲分区链在预期数量耗尽前提前结束。");
-                return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
-            }
-
-            if (!_flushLockState.TryMarkDirty())
-            {
-                return ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL;
-            }
-
-            FreePartitionState = new ChunkRegionHeaderOperator.FreePartitionState(
-                nextHeadPartitionIndex,
-                FreePartitionCount - 1);
-            return currentHeadPartitionIndex;
+            _state = new FreePartitionState(current, newFreePartitionCount);
+            return resultIndices;
         }
 
+        // ================================================================================
+        //                              注册空闲分区
+        // ================================================================================
+
         /// <summary>
-        /// 将指定分区注册到当前空闲分区链头部。
-        /// <para>该方法会先确保实例进入 dirty 状态，再写入分区 next 指针并更新内存头状态。</para>
+        /// 注册单个分区到空闲链头部，返回是否成功。
+        /// <para>流程：校验分区索引在已分配范围内 → 写入该分区的 next 指针（指向当前链头或哨兵）→ 更新 <see cref="_state"/>。</para>
         /// </summary>
-        public ChunkRegionHeaderOperator.FreePartitionState RegisterHeadPartition(uint partitionIndex)
+        /// <param name="partitionIndex">要注册到空闲链头部的分区索引。</param>
+        /// <returns>注册是否成功。</returns>
+        public bool RegisterHeadPartition(uint partitionIndex)
         {
-            if (!IsFreePartitionStateValid(_stream, FreePartitionState))
-            {
-                GD.PushError("[ChunkRegionFreePartitionChain] RegisterHeadPartition: 当前空闲分区头状态非法。");
-                return FreePartitionState;
-            }
-
-            if (!_flushLockState.TryMarkDirty())
-            {
-                return FreePartitionState;
-            }
-
+            // 分区索引必须处于当前文件的已分配范围内。
             if (!ChunkRegionPartitionOperator.IsPartitionIndexInRange(_stream, partitionIndex))
             {
-                GD.PushError($"[ChunkRegionFreePartitionChain] RegisterHeadPartition: 分区索引 {partitionIndex} 超出已分配范围。");
-                return FreePartitionState;
+                GD.PushError(
+                    $"[ChunkRegionFreePartitionChain] RegisterHeadPartition: 分区索引 {partitionIndex} 越界。");
+                return false;
             }
 
-            uint nextPartitionIndex = FreePartitionCount == 0
+            // 确定该分区的 next 指针：当前链为空则为哨兵，否则指向现有链头。
+            uint next = _state.FreePartitionCount == 0
                 ? ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL
-                : HeadPartitionIndex;
+                : _state.HeadFreePartitionIndex;
+
+            // 把 next 指针写入该分区的 next 字段。
             Span<byte> nextBytes = stackalloc byte[ChunkRegionFileLayout.PARTITION_NEXT_INDEX_SIZE];
-            BinaryPrimitives.WriteUInt32LittleEndian(nextBytes, nextPartitionIndex);
+            BinaryPrimitives.WriteUInt32LittleEndian(nextBytes, next);
 
-            // 头插只改 next 指针，payload 是否清理不是空闲链职责。
-            if (!ChunkRegionFileAccessor.TryWriteBytes(_stream, ChunkRegionFileLayout.GetPartitionNextOffsetInFile(partitionIndex), nextBytes))
+            if (!ChunkRegionFileAccessor.TryWriteBytes(
+                    _stream,
+                    ChunkRegionFileLayout.GetPartitionNextOffsetInFile(partitionIndex),
+                    nextBytes))
             {
-                GD.PushError($"[ChunkRegionFreePartitionChain] RegisterHeadPartition: 写入分区 {partitionIndex} 的 next 指针失败。");
-                return FreePartitionState;
+                GD.PushError(
+                    $"[ChunkRegionFreePartitionChain] RegisterHeadPartition: 写入分区 {partitionIndex} 的 next 指针失败。");
+                return false;
             }
 
-            ChunkRegionHeaderOperator.FreePartitionState newFreePartitionState = new(
-                partitionIndex,
-                checked(FreePartitionCount + 1));
-            if (!IsFreePartitionStateValid(_stream, newFreePartitionState))
-            {
-                GD.PushError("[ChunkRegionFreePartitionChain] RegisterHeadPartition: 注册后的空闲分区头状态非法。");
-                return FreePartitionState;
-            }
-
-            FreePartitionState = newFreePartitionState;
-            return FreePartitionState;
+            // 更新内存快照：新链头为刚注册的分区，数量加一。
+            _state = new FreePartitionState(partitionIndex, _state.FreePartitionCount + 1);
+            return true;
         }
 
         /// <summary>
-        /// 将当前内存中的空闲分区头状态写回文件头，并强制冲刷到底层文件。
-        /// <para>该方法是“dirty 回到 clean”的标准出口；成功时会统一释放 region 锁。</para>
+        /// 注册一组空闲分区到链头部，返回是否全部成功。
+        /// <para>流程：将输入降序排序（保证结果链中索引递增），然后逐个调用 <see cref="RegisterHeadPartition"/> 注册。
+        /// 任一失败则立即返回 false，已注册的分区不会回滚。</para>
         /// </summary>
-        public bool FlushStateToFile()
+        /// <param name="indices">要注册的分区索引只读跨度。</param>
+        /// <returns>是否全部注册成功。</returns>
+        public bool RegisterHeadPartitions(ReadOnlySpan<uint> indices)
         {
-            if (IsFlushed)
+            if (indices.IsEmpty)
             {
                 return true;
             }
 
-            if (!IsFreePartitionStateValid(_stream, FreePartitionState))
+            // 降序排序：先插入大索引，再插入小索引，保证最终链的遍历顺序递增。
+            Span<uint> sorted = stackalloc uint[indices.Length];
+            indices.CopyTo(sorted);
+            sorted.Sort((a, b) => b.CompareTo(a));
+
+            foreach (uint index in sorted)
             {
-                GD.PushError("[ChunkRegionFreePartitionChain] FlushStateToFile: 当前空闲分区头状态非法，无法写回文件。");
+                if (!RegisterHeadPartition(index))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        // ================================================================================
+        //                              校验（静态）
+        // ================================================================================
+
+        /// <summary>
+        /// 校验空闲分区头状态是否与当前文件的分区总数一致。
+        /// <para>哨兵索引必须对应零数量；非零数量时链头必须处于已分配范围内。</para>
+        /// </summary>
+        /// <param name="stream">当前 region 文件流。</param>
+        /// <param name="state">待校验的空闲分区头状态。</param>
+        /// <returns>状态是否合法。</returns>
+        private static bool IsStateValid(FileStream stream, FreePartitionState state)
+        {
+            uint allocatedCount = ChunkRegionPartitionOperator.GetAllocatedPartitionCount(stream);
+
+            // 哨兵索引 + 零数量 = 空链，合法。
+            if (state.HeadFreePartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL)
+            {
+                return state.FreePartitionCount == 0;
+            }
+
+            // 非哨兵索引但数量为零，不可能。
+            if (state.FreePartitionCount == 0)
+            {
                 return false;
             }
 
-            if (!ChunkRegionHeaderOperator.WriteFreePartitionState(_stream, FreePartitionState))
+            // 空闲分区数量不可能超过已分配总量。
+            if (state.FreePartitionCount > allocatedCount)
             {
                 return false;
             }
 
-            try
-            {
-                _stream.Flush(true);
-            }
-            catch (Exception exception)
-            {
-                GD.PushError($"[ChunkRegionFreePartitionChain] FlushStateToFile: 冲刷文件失败: {exception.Message}");
-                return false;
-            }
-
-            return _flushLockState.TryClean();
-        }
-
-        /// <summary>
-        /// 枚举当前活链中的全部空闲分区索引。
-        /// </summary>
-        public IEnumerator<uint> GetEnumerator()
-        {
-            if (!IsFreePartitionStateValid(_stream, FreePartitionState))
-            {
-                yield break;
-            }
-
-            uint currentPartitionIndex = HeadPartitionIndex;
-            for (uint i = 0; i < FreePartitionCount; i++)
-            {
-                if (!ChunkRegionPartitionOperator.IsPartitionIndexInRange(_stream, currentPartitionIndex))
-                {
-                    GD.PushError($"[ChunkRegionFreePartitionChain] GetEnumerator: 空闲分区索引 {currentPartitionIndex} 超出已分配范围。");
-                    yield break;
-                }
-
-                yield return currentPartitionIndex;
-                if (!ChunkRegionPartitionOperator.TryReadValidatedNextPartitionIndex(_stream, currentPartitionIndex, out uint nextPartitionIndex))
-                {
-                    yield break;
-                }
-
-                currentPartitionIndex = nextPartitionIndex;
-                if (currentPartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL && i < FreePartitionCount - 1)
-                {
-                    yield break;
-                }
-            }
-        }
-
-        /// <summary>
-        /// 返回非泛型枚举器。
-        /// </summary>
-        IEnumerator IEnumerable.GetEnumerator()
-        {
-            return GetEnumerator();
-        }
-
-        /// <summary>
-        /// 释放当前空闲分区链实例。
-        /// <para>若当前仍为 dirty 状态，会先尝试写回文件；若写回失败，则仍会执行 clean 流程以避免锁泄漏。</para>
-        /// </summary>
-        public void Dispose()
-        {
-            if (IsFlushed)
-            {
-                return;
-            }
-
-            if (FlushStateToFile())
-            {
-                return;
-            }
-
-            GD.PushError("[ChunkRegionFreePartitionChain] Dispose: 写回空闲分区头状态失败，将直接执行 clean 流程以避免锁泄漏。");
-            _flushLockState.TryClean();
+            // 链头索引必须在已分配范围内。
+            return state.HeadFreePartitionIndex < allocatedCount;
         }
     }
 }

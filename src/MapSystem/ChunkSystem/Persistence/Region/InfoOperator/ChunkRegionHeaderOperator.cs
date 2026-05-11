@@ -6,36 +6,61 @@ using Godot;
 namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region.InfoOperator
 {
     /// <summary>
+    /// 区块头数据记录，描述一条分区链的入口与大小。
+    /// </summary>
+    public readonly struct ChunkHeaderData(uint firstPartitionIndex, ushort lastPartitionDataLength, uint partitionCount, long timestamp)
+    {
+        /// <summary>
+        /// 分区链首分区索引。
+        /// </summary>
+        public uint FirstPartitionIndex { get; } = firstPartitionIndex;
+
+        /// <summary>
+        /// 最后分区中的有效数据字节数。
+        /// </summary>
+        public ushort LastPartitionDataLength { get; } = lastPartitionDataLength;
+
+        /// <summary>
+        /// 分区链中的分区总数。
+        /// </summary>
+        public uint PartitionCount { get; } = partitionCount;
+
+        /// <summary>
+        /// 最后写入时间戳。
+        /// </summary>
+        public long Timestamp { get; } = timestamp;
+
+        /// <summary>
+        /// 是否为空记录——从未被写入过。
+        /// </summary>
+        public bool IsEmpty =>
+            FirstPartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL &&
+            LastPartitionDataLength == 0 &&
+            PartitionCount == 0;
+    }
+
+    /// <summary>
+    /// 空闲分区头状态快照，描述空闲链的头部与节点数量。
+    /// </summary>
+    public readonly struct FreePartitionState(uint headFreePartitionIndex, uint freePartitionCount)
+    {
+        /// <summary>
+        /// 空闲分区链头索引。
+        /// </summary>
+        public uint HeadFreePartitionIndex { get; } = headFreePartitionIndex;
+
+        /// <summary>
+        /// 空闲分区数量。
+        /// </summary>
+        public uint FreePartitionCount { get; } = freePartitionCount;
+    }
+
+    /// <summary>
     /// ChunkRegion 头数据操作工具。
     /// <para>该静态类只负责头数据区与空闲分区头字段的基础读写，不持有任何实例状态。</para>
     /// </summary>
     public static class ChunkRegionHeaderOperator
     {
-        /// <summary>
-        /// 区块头数据记录。
-        /// </summary>
-        public readonly struct ChunkHeaderData(uint firstPartitionIndex, ushort lastPartitionDataLength, uint partitionCount, long timestamp)
-        {
-            public uint FirstPartitionIndex { get; } = firstPartitionIndex;
-            public ushort LastPartitionDataLength { get; } = lastPartitionDataLength;
-            public uint PartitionCount { get; } = partitionCount;
-            public long Timestamp { get; } = timestamp;
-
-            public bool IsEmpty =>
-                FirstPartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL &&
-                LastPartitionDataLength == 0 &&
-                PartitionCount == 0;
-        }
-
-        /// <summary>
-        /// 空闲分区头状态。
-        /// </summary>
-        public readonly struct FreePartitionState(uint headFreePartitionIndex, uint freePartitionCount)
-        {
-            public uint HeadFreePartitionIndex { get; } = headFreePartitionIndex;
-            public uint FreePartitionCount { get; } = freePartitionCount;
-        }
-
         /// <summary>
         /// 根据局部 chunk 坐标读取头数据。
         /// </summary>
@@ -46,7 +71,6 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region.InfoOperator
                 return null;
             }
 
-            // 头数据按固定长度连续布局，读取后直接按既定字段顺序反序列化即可。
             if (!ChunkRegionFileAccessor.TryReadBytes(
                     stream,
                     chunkDataOffsetInFile,
@@ -78,7 +102,6 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region.InfoOperator
                 return false;
             }
 
-            // 写入前先做完整校验，避免把结构上不可能成立的头记录落盘后污染整个 region。
             Span<byte> headerBytes = stackalloc byte[ChunkRegionFileLayout.CHUNK_DATA_ENTRY_SIZE];
             BinaryPrimitives.WriteUInt32LittleEndian(headerBytes.Slice(0, sizeof(uint)), chunkHeaderData.FirstPartitionIndex);
             BinaryPrimitives.WriteUInt16LittleEndian(headerBytes.Slice(sizeof(uint), sizeof(ushort)), chunkHeaderData.LastPartitionDataLength);
@@ -157,7 +180,6 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region.InfoOperator
         {
             if (chunkHeaderData.IsEmpty)
             {
-                // 空头记录是合法状态，表示该 chunk 目前没有挂任何分区链。
                 return true;
             }
 
@@ -180,7 +202,6 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region.InfoOperator
                 return false;
             }
 
-            // 这里只校验“能否作为一条可能存在的链”的上界约束，链条本身是否断裂交给读写流程逐步验证。
             uint allocatedPartitionCount = ChunkRegionPartitionOperator.GetAllocatedPartitionCount(stream);
             if (chunkHeaderData.FirstPartitionIndex >= allocatedPartitionCount)
             {

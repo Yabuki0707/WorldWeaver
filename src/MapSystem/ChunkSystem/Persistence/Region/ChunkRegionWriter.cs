@@ -8,27 +8,11 @@ using WorldWeaver.MapSystem.ChunkSystem.Persistence.Region.InfoOperator;
 namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
 {
     /// <summary>
-    /// ChunkRegion 写入器。
-    /// <para>该类型基于 ChunkRegionFileAccessor 与静态操作工具，实现区块数据的新链写入、头数据更新与旧链回收流程。</para>
+    /// ChunkRegion 写入器。唯一公开入口为 <see cref="StoreChunkStorageGroup"/>，
+    /// 空闲分区链随 using 作用域自动释放。
     /// </summary>
     public sealed class ChunkRegionWriter : ChunkRegionFileAccessor
     {
-        /// <summary>
-        /// 组储存流程中的单个 chunk 写入项。
-        /// </summary>
-        public readonly struct ChunkStorageWriteItem(ChunkPosition chunkPosition, ChunkDataStorage storage)
-        {
-            /// <summary>
-            /// 区块坐标。
-            /// </summary>
-            public ChunkPosition ChunkPosition { get; } = chunkPosition;
-
-            /// <summary>
-            /// 区块储存对象。
-            /// </summary>
-            public ChunkDataStorage Storage { get; } = storage;
-        }
-
         private ChunkRegionWriter(string regionFilePath, Vector2I regionPosition, FileStream stream)
             : base(regionFilePath, regionPosition, stream)
         {
@@ -45,18 +29,9 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
         }
 
         /// <summary>
-        /// 保存指定 chunk 的储存对象。
+        /// 以组为单位储存多个 chunk。空闲分区链在 using 作用域内分配与回收，最后一次性 Flush。
         /// </summary>
-        public bool SaveChunkStorage(ChunkPosition chunkPosition, ChunkDataStorage storage)
-        {
-            return SaveChunkStorage(chunkPosition, storage, null);
-        }
-
-        /// <summary>
-        /// 以组为单位储存多个 chunk 的储存对象。
-        /// <para>该方法只统一持有一个空闲分区链实例；实际链替换仍按 chunk 顺序逐个完成。</para>
-        /// </summary>
-        public bool StoreChunkStorageGroup(IReadOnlyList<ChunkStorageWriteItem> writeItems)
+        public bool StoreChunkStorageGroup(IReadOnlyList<(ChunkPosition ChunkPosition, ChunkDataStorage Storage)> writeItems)
         {
             if (writeItems == null)
             {
@@ -64,36 +39,32 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
                 return false;
             }
 
-            using ChunkRegionFreePartitionChain freePartitionChain = ChunkRegionFreePartitionChain.Create(Stream);
-            if (freePartitionChain == null)
-            {
-                GD.PushError("[ChunkRegionWriter] StoreChunkStorageGroup: region 文件中的空闲分区状态非法。");
-                return false;
-            }
+            using ChunkRegionFreePartitionChain freePartitionChain = new(Stream);
 
-            foreach (ChunkStorageWriteItem writeItem in writeItems)
+            foreach ((ChunkPosition chunkPosition, ChunkDataStorage storage) in writeItems)
             {
-                if (!SaveChunkStorage(writeItem.ChunkPosition, writeItem.Storage, freePartitionChain))
+                if (!WriteOneChunk(chunkPosition, storage, freePartitionChain))
                 {
                     return false;
                 }
             }
 
-            return freePartitionChain.FlushStateToFile();
+            return true;
         }
 
+        // ================================================================================
+        //                              单 chunk 写入
+        // ================================================================================
+
         /// <summary>
-        /// 保存指定 chunk 的储存对象。
-        /// <para>当传入共享空闲分区链时，分区分配和旧链回收复用同一个链实例，以支持组级 Store IO。</para>
+        /// 写入单个 chunk：校验 → 压缩 → 分配分区 → 写新链 → 更新头 → 回收旧链。
+        /// <paramref name="freePartitionChain"/> 由外层 StoreChunkStorageGroup 持有，此处不负责生命周期。
         /// </summary>
-        private bool SaveChunkStorage(
-            ChunkPosition chunkPosition,
-            ChunkDataStorage storage,
-            ChunkRegionFreePartitionChain sharedFreePartitionChain)
+        private bool WriteOneChunk(ChunkPosition chunkPosition, ChunkDataStorage storage, ChunkRegionFreePartitionChain freePartitionChain)
         {
             if (storage == null)
             {
-                GD.PushError("[ChunkRegionWriter] SaveChunkStorage: storage 不能为空。");
+                GD.PushError("[ChunkRegionWriter] WriteOneChunk: storage 不能为空。");
                 return false;
             }
 
@@ -101,50 +72,54 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
                 chunkPosition,
                 out Vector2I regionPosition,
                 out Vector2I localChunkPosition);
-            // 写入器只允许操作自己绑定的 region，避免把局部坐标写进错误文件后造成静默损坏。
             if (regionPosition != RegionPosition)
             {
                 GD.PushError(
-                    $"[ChunkRegionWriter] SaveChunkStorage: chunkPosition {chunkPosition} 不属于当前 region ({RegionPosition.X}, {RegionPosition.Y})。");
+                    $"[ChunkRegionWriter] WriteOneChunk: chunk {chunkPosition} 不属于当前 region ({RegionPosition.X}, {RegionPosition.Y})。");
                 return false;
             }
 
-            ChunkRegionHeaderOperator.ChunkHeaderData? oldChunkHeaderData =
+            // 读旧头记录
+            ChunkHeaderData? oldHeader =
                 ChunkRegionHeaderOperator.ReadChunkHeaderData(Stream, localChunkPosition);
-            if (!oldChunkHeaderData.HasValue)
+            if (!oldHeader.HasValue)
             {
                 return false;
             }
 
-            if (!ChunkRegionHeaderOperator.ValidateChunkHeaderData(Stream, oldChunkHeaderData.Value))
+            if (!ChunkRegionHeaderOperator.ValidateChunkHeaderData(Stream, oldHeader.Value))
             {
-                GD.PushError($"[ChunkRegionWriter] SaveChunkStorage: region 文件 {RegionFilePath} 中 chunk {chunkPosition} 旧头数据非法。");
+                GD.PushError($"[ChunkRegionWriter] WriteOneChunk: chunk {chunkPosition} 旧头数据非法。");
                 return false;
             }
 
-            // 先序列化出完整压缩数据，再一次性决定分区需求，避免边写边算导致链结构难以回滚。
+            // 压缩 → 分配分区（空闲链优先，不够则尾部追加）
             byte[] compressedBytes = storage.ToCompressedBytes();
             int requiredPartitionCount = ChunkRegionPartitionOperator.CalculateRequiredPartitionCount(compressedBytes.Length);
             if (requiredPartitionCount <= 0)
             {
-                GD.PushError("[ChunkRegionWriter] SaveChunkStorage: 压缩后的 chunk 数据为空，无法写入 region。");
+                GD.PushError("[ChunkRegionWriter] WriteOneChunk: 压缩后的 chunk 数据为空。");
                 return false;
             }
 
-            uint[] newPartitionIndices = AllocatePartitionIndices(requiredPartitionCount, sharedFreePartitionChain);
+            uint[] newPartitionIndices = freePartitionChain.Count >= (uint)requiredPartitionCount
+                ? freePartitionChain - requiredPartitionCount
+                : ChunkRegionPartitionOperator.AppendTailPartitions(Stream, requiredPartitionCount);
             if (newPartitionIndices == null || newPartitionIndices.Length != requiredPartitionCount)
             {
-                GD.PushError("[ChunkRegionWriter] SaveChunkStorage: 分配新分区链失败。");
+                GD.PushError("[ChunkRegionWriter] WriteOneChunk: 分配新分区链失败。");
                 return false;
             }
 
-            if (!WriteNewChunkChain(newPartitionIndices, compressedBytes, out ushort lastPartitionDataLength))
+            // 写新分区链
+            if (!WriteChunkPartitionChain(newPartitionIndices, compressedBytes, out ushort lastPartitionDataLength))
             {
                 return false;
             }
 
             Stream.Flush(true);
 
+            // 更新头记录
             if (!ChunkRegionHeaderOperator.WriteChunkHeaderData(
                     Stream,
                     localChunkPosition,
@@ -153,83 +128,39 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
                     (uint)requiredPartitionCount,
                     DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
             {
-                GD.PushError("[ChunkRegionWriter] SaveChunkStorage: 写入 chunk 头数据失败。");
+                GD.PushError("[ChunkRegionWriter] WriteOneChunk: 写入 chunk 头数据失败。");
                 return false;
             }
 
             Stream.Flush(true);
 
-            if (!RecycleOldChunkChain(oldChunkHeaderData.Value, sharedFreePartitionChain))
+            // 回收旧链
+            if (!oldHeader.Value.IsEmpty)
             {
-                return false;
+                if (!RecycleChunkChain(oldHeader.Value, freePartitionChain))
+                {
+                    return false;
+                }
+
+                Stream.Flush(true);
             }
 
-            Stream.Flush(true);
             return true;
         }
 
-        /// <summary>
-        /// 为新链分配分区索引。
-        /// <para>当空闲分区数量足够时，只使用空闲分区；否则全部在文件尾部新开分区。</para>
-        /// </summary>
-        private uint[] AllocatePartitionIndices(
-            int requiredPartitionCount,
-            ChunkRegionFreePartitionChain sharedFreePartitionChain = null)
-        {
-            bool ownsFreePartitionChain = sharedFreePartitionChain == null;
-            ChunkRegionFreePartitionChain freePartitionChain = sharedFreePartitionChain;
-            if (freePartitionChain == null)
-            {
-                freePartitionChain = ChunkRegionFreePartitionChain.Create(Stream);
-                if (freePartitionChain == null)
-                {
-                    GD.PushError("[ChunkRegionWriter] AllocatePartitionIndices: region 文件中的空闲分区状态非法。");
-                    return null;
-                }
-            }
-
-            try
-            {
-                if (freePartitionChain.FreePartitionCount < (uint)requiredPartitionCount)
-                {
-                    // 空闲链不够时直接走尾部分配，避免混合“取一部分空闲 + 追加一部分尾部”带来的状态复杂化。
-                    return ChunkRegionPartitionOperator.AppendTailPartitions(Stream, requiredPartitionCount);
-                }
-
-                uint[] partitionIndices = freePartitionChain.GetFreePartitionList(requiredPartitionCount);
-                if (partitionIndices == null)
-                {
-                    GD.PushError("[ChunkRegionWriter] AllocatePartitionIndices: 获取空闲分区列表失败。");
-                    return null;
-                }
-
-                if (!freePartitionChain.FlushStateToFile())
-                {
-                    GD.PushError("[ChunkRegionWriter] AllocatePartitionIndices: 写回空闲分区头状态失败。");
-                    return null;
-                }
-
-                return partitionIndices;
-            }
-            finally
-            {
-                if (ownsFreePartitionChain)
-                {
-                    freePartitionChain.Dispose();
-                }
-            }
-        }
+        // ================================================================================
+        //                              分区链写入
+        // ================================================================================
 
         /// <summary>
-        /// 将压缩后的区块数据写入新的分区链。
+        /// 将压缩数据按分区索引数组写入新链，同时设置 next 指针。
         /// </summary>
-        private bool WriteNewChunkChain(uint[] partitionIndices, byte[] compressedBytes, out ushort lastPartitionDataLength)
+        private bool WriteChunkPartitionChain(uint[] partitionIndices, byte[] compressedBytes, out ushort lastPartitionDataLength)
         {
             int writtenLength = 0;
             lastPartitionDataLength = 0;
             for (int i = 0; i < partitionIndices.Length; i++)
             {
-                // 链中的 next 关系在写每个分区时一次性确定，避免后续再做第二轮补链。
                 uint nextPartitionIndex = i == partitionIndices.Length - 1
                     ? ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL
                     : partitionIndices[i + 1];
@@ -238,7 +169,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
                     compressedBytes.Length - writtenLength);
                 if (currentWriteLength <= 0)
                 {
-                    GD.PushError("[ChunkRegionWriter] WriteNewChunkChain: 分区数量与压缩数据长度不匹配。");
+                    GD.PushError("[ChunkRegionWriter] WriteChunkPartitionChain: 分区数量与压缩数据长度不匹配。");
                     return false;
                 }
 
@@ -248,102 +179,62 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence.Region
                         nextPartitionIndex,
                         compressedBytes.AsSpan(writtenLength, currentWriteLength)))
                 {
-                    GD.PushError("[ChunkRegionWriter] WriteNewChunkChain: 写入 chunk 分区失败。");
+                    GD.PushError("[ChunkRegionWriter] WriteChunkPartitionChain: 写入 chunk 分区失败。");
                     return false;
                 }
 
                 writtenLength += currentWriteLength;
-                // 这里只持续覆盖最后一次写入长度，循环结束后自然就是最后分区的有效字节数。
                 lastPartitionDataLength = checked((ushort)currentWriteLength);
             }
 
             if (writtenLength != compressedBytes.Length)
             {
-                GD.PushError("[ChunkRegionWriter] WriteNewChunkChain: chunk 数据写入结束后仍有剩余字节未落盘。");
+                GD.PushError("[ChunkRegionWriter] WriteChunkPartitionChain: 写入结束后仍有剩余字节未落盘。");
                 return false;
             }
 
             return true;
         }
 
+        // ================================================================================
+        //                              旧链回收
+        // ================================================================================
+
         /// <summary>
-        /// 回收旧的区块分区链，并将其加入空闲分区链。
+        /// 遍历旧链的每个分区，逐个注册到空闲分区链头部。
         /// </summary>
-        private bool RecycleOldChunkChain(
-            ChunkRegionHeaderOperator.ChunkHeaderData oldChunkHeaderData,
-            ChunkRegionFreePartitionChain sharedFreePartitionChain = null)
+        private bool RecycleChunkChain(ChunkHeaderData oldHeader, ChunkRegionFreePartitionChain freePartitionChain)
         {
-            if (oldChunkHeaderData.IsEmpty)
+            int partitionCount = checked((int)oldHeader.PartitionCount);
+            uint currentPartitionIndex = oldHeader.FirstPartitionIndex;
+            HashSet<uint> visitedPartitionIndices = new(partitionCount);
+            for (int i = 0; i < partitionCount; i++)
             {
-                return true;
-            }
-
-            if (!ChunkRegionHeaderOperator.ValidateChunkHeaderData(Stream, oldChunkHeaderData))
-            {
-                GD.PushError("[ChunkRegionWriter] RecycleOldChunkChain: 旧 chunk 头数据非法。");
-                return false;
-            }
-
-            bool ownsFreePartitionChain = sharedFreePartitionChain == null;
-            ChunkRegionFreePartitionChain freePartitionChain = sharedFreePartitionChain;
-            if (freePartitionChain == null)
-            {
-                freePartitionChain = ChunkRegionFreePartitionChain.Create(Stream);
-                if (freePartitionChain == null)
+                if (!visitedPartitionIndices.Add(currentPartitionIndex))
                 {
-                    GD.PushError("[ChunkRegionWriter] RecycleOldChunkChain: region 文件中的空闲分区状态非法，无法回收旧链。");
+                    GD.PushError("[ChunkRegionWriter] RecycleChunkChain: 旧分区链存在循环或重复节点。");
                     return false;
                 }
-            }
 
-            try
-            {
-                int partitionCount = checked((int)oldChunkHeaderData.PartitionCount);
-                uint currentPartitionIndex = oldChunkHeaderData.FirstPartitionIndex;
-                HashSet<uint> visitedPartitionIndices = new(partitionCount);
-                for (int i = 0; i < partitionCount; i++)
+                if (!ChunkRegionPartitionOperator.TryReadValidatedNextPartitionIndex(
+                        Stream, currentPartitionIndex, out uint nextPartitionIndex))
                 {
-                    // 回收流程同样要防环，否则损坏旧链会把空闲链写坏得更严重。
-                    if (!visitedPartitionIndices.Add(currentPartitionIndex))
-                    {
-                        GD.PushError("[ChunkRegionWriter] RecycleOldChunkChain: 旧 chunk 分区链存在循环或重复节点。");
-                        return false;
-                    }
-
-                    // 先读出旧 next，再把当前分区挂入空闲链，否则当前分区的 next 会被注册逻辑覆盖掉。
-                    if (!ChunkRegionPartitionOperator.TryReadValidatedNextPartitionIndex(Stream, currentPartitionIndex, out uint nextPartitionIndex))
-                    {
-                        GD.PushError("[ChunkRegionWriter] RecycleOldChunkChain: 读取旧 chunk 分区链 next 索引失败。");
-                        return false;
-                    }
-
-                    ChunkRegionHeaderOperator.FreePartitionState oldFreePartitionState = freePartitionChain.FreePartitionState;
-                    ChunkRegionHeaderOperator.FreePartitionState newFreePartitionState = freePartitionChain.RegisterHeadPartition(currentPartitionIndex);
-                    if (newFreePartitionState.HeadFreePartitionIndex == oldFreePartitionState.HeadFreePartitionIndex &&
-                        newFreePartitionState.FreePartitionCount == oldFreePartitionState.FreePartitionCount)
-                    {
-                        GD.PushError("[ChunkRegionWriter] RecycleOldChunkChain: 将旧分区注册到空闲分区链失败。");
-                        return false;
-                    }
-
-                    if (nextPartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL)
-                    {
-                        return freePartitionChain.FlushStateToFile();
-                    }
-
-                    currentPartitionIndex = nextPartitionIndex;
+                    GD.PushError("[ChunkRegionWriter] RecycleChunkChain: 读取旧分区链 next 索引失败。");
+                    return false;
                 }
 
-                GD.PushError("[ChunkRegionWriter] RecycleOldChunkChain: 旧 chunk 分区链在达到记录的分区总数后仍未结束。");
-                return false;
-            }
-            finally
-            {
-                if (ownsFreePartitionChain)
+                _ = freePartitionChain + currentPartitionIndex;
+
+                if (nextPartitionIndex == ChunkRegionFileLayout.PARTITION_INDEX_SENTINEL)
                 {
-                    freePartitionChain.Dispose();
+                    return true;
                 }
+
+                currentPartitionIndex = nextPartitionIndex;
             }
+
+            GD.PushError("[ChunkRegionWriter] RecycleChunkChain: 旧分区链在达到记录的分区总数后仍未结束。");
+            return false;
         }
     }
 }

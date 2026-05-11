@@ -189,14 +189,6 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                     return CreateGroupFailure(taskGroup, "无法确保 region 文件存在。");
                 }
 
-                // 空闲分区锁仍以标准 region 文件路径为键；这里是进入底层 IO 前的路径转换点。
-                if (!ChunkRegionFilePath.TryGetRegionFilePath(_rootPath, regionPosition, out string regionFilePath))
-                {
-                    return CreateGroupFailure(taskGroup, "无法生成 region 文件路径。");
-                }
-
-                // 一个 Store 任务组内的 chunk 共享一次空闲分区锁与 writer 打开。
-                using (ChunkRegionFreePartitionLockTable.Lock(regionFilePath))
                 using (ChunkRegionWriter regionWriter = ChunkRegionWriter.Open(_rootPath, regionPosition))
                 {
                     if (regionWriter == null)
@@ -204,7 +196,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                         return CreateGroupFailure(taskGroup, "无法打开 region 写入器。");
                     }
 
-                    List<ChunkRegionWriter.ChunkStorageWriteItem> writeItems = [];
+                    List<(ChunkPosition ChunkPosition, ChunkDataStorage Storage)> writeItems = [];
                     Dictionary<long, ulong> storedTicks = [];
                     foreach (long chunkKey in taskGroup)
                     {
@@ -221,7 +213,7 @@ namespace WorldWeaver.MapSystem.ChunkSystem.Persistence
                         }
 
                         storedTicks[chunkKey] = storedTick;
-                        writeItems.Add(new ChunkRegionWriter.ChunkStorageWriteItem(chunkPosition, storage));
+                        writeItems.Add((chunkPosition, storage));
                     }
 
                     // 组储存内部会以组为单位处理空闲分区，再逐 chunk 完成链替换与旧链回收。
