@@ -1,4 +1,8 @@
+using System;
+using System.Collections.Generic;
+using System.Reflection;
 using Godot;
+using WorldWeaver.ModCore;
 using WorldWeaver.ModSystem;
 using WorldWeaver.Systems;
 
@@ -18,7 +22,7 @@ namespace WorldWeaver
 		/// <summary>
 		/// 全局 System 容器。
 		/// </summary>
-		public IGlobalSystemsManager Systems { get; private set; }
+		public IGlobalSystemManager Systems { get; private set; }
 
 		/// <summary>
 		/// Mod 管理器。
@@ -28,7 +32,7 @@ namespace WorldWeaver
 		/// <summary>
 		/// 游戏关闭前触发。
 		/// </summary>
-		public event System.Action GameShuttingDown;
+		public event Action GameShuttingDown;
 
 		/// <summary>
 		/// 构造时即收编入静态单例。若已有实例存在则报错。
@@ -37,25 +41,29 @@ namespace WorldWeaver
 		{
 			if (Instance != null)
 			{
-				throw new System.InvalidOperationException(
+				throw new InvalidOperationException(
                     "[GameManager]:已存在一个 GameManager 实例，不允许重复创建。"
 				);
 			}
 
 			Instance = this;
+			IGameManager.Instance = this;
 		}
 
 		/// <summary>
-		/// 引擎入口。初始化容器 → 注册香草 System → 启动。
+		/// 引擎入口。初始化容器 → 反射收集 [VanillaGlobalSystem] → 注册 → 启动。
 		/// </summary>
 		public override void _Ready()
 		{
-			GlobalSystemsManager systemsManager = new();
+			GlobalSystemManager systemsManager = new();
 			Systems = systemsManager;
 			ModManager = new ModManager();
 
-			// 香草 System 注册
-			systemsManager.GlobalSystemRegistering += RegisterVanillaSystems;
+			IReadOnlyList<IGlobalSystem> vanillaSystems = GetVanillaGlobalSystemInstances();
+			foreach (IGlobalSystem system in vanillaSystems)
+			{
+				systemsManager.GlobalSystemRegistering += manager => manager.Register(system);
+			}
 
 			// 模组加载与注册（待 ModManager 完善后在此处接入）
 
@@ -71,12 +79,37 @@ namespace WorldWeaver
 		}
 
 		/// <summary>
-		/// 香草 System 在此硬编码注册。
+		/// 反射扫描当前程序集中标记了 <see cref="VanillaGlobalSystemAttribute"/> 的 IGlobalSystem 实现，
+		/// 实例化并返回。
 		/// </summary>
-		private void RegisterVanillaSystems(IGlobalSystemsManager manager)
+		private static IReadOnlyList<IGlobalSystem> GetVanillaGlobalSystemInstances()
 		{
-			// manager.Register(new SaveManager());
-			// manager.Register(new ...);
+			List<IGlobalSystem> systems = new();
+
+			foreach (Type type in Assembly.GetExecutingAssembly().GetTypes())
+			{
+				if (type.IsAbstract)
+				{
+					continue;
+				}
+
+				if (!typeof(IGlobalSystem).IsAssignableFrom(type))
+				{
+					continue;
+				}
+
+				if (type.GetCustomAttribute<VanillaGlobalSystemAttribute>() == null)
+				{
+					continue;
+				}
+
+				if (Activator.CreateInstance(type) is IGlobalSystem instance)
+				{
+					systems.Add(instance);
+				}
+			}
+
+			return systems;
 		}
 	}
 }

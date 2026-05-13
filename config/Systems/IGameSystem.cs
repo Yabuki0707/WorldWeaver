@@ -1,7 +1,7 @@
 namespace WorldWeaver.Systems
 {
     /// <summary>
-    /// System 基接口。定义所有 System 共有的身份标识、查询与卸载行为。
+    /// System 基接口。定义所有 System 共有的身份标识、查询入口与卸载行为。
     /// </summary>
     public interface IGameSystem
     {
@@ -11,9 +11,12 @@ namespace WorldWeaver.Systems
         string SystemName { get; }
 
         /// <summary>
-        /// 按名称查询同级 System。委托至所属容器的双 Key 索引器。
+        /// 按名称查询全局 System。默认实现委托至 IGameManager.Instance.Systems.ResolveFor。
         /// </summary>
-        IGameSystem GetGlobalSystem(string systemName);
+        IGameSystem VisitSystem(string systemName)
+        {
+            return IGameManager.Instance.Systems.ResolveFor(this, systemName);
+        }
 
         /// <summary>
         /// 卸载本 System，清理所有运行时状态。

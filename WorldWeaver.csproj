@@ -44,17 +44,17 @@
     <Content Include="addons\Vector2IExtensions.cs.uid" />
     <Content Include="ARCHITECTURE.md" />
     <Content Include="src\CODE_STYLE.md" />
-    <Content Include="src\MapSystem\README.md" />
-    <Content Include="src\MapSystem\TODO.md" />
+    <Content Include="src\MapCore\README.md" />
+    <Content Include="src\MapCore\TODO.md" />
     <Content Include="src\PROJECT_STANDARD.md" />
     <Content Include="StartGrund.tscn" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="addons\PixelShapeSystem\QuadrangleShape\" />
     <Folder Include="mods\" />
-    <Folder Include="src\MapSystem\ChunkSystem\Persistence\Region\ToolScript\" />
-    <Folder Include="src\MapSystem\TileSystem\Manger\" />
-    <Folder Include="src\MapSystem\WorldSystem\" />
+    <Folder Include="src\MapCore\ChunkCore\Persistence\Region\ToolScript\" />
+    <Folder Include="src\MapCore\TileCore\Manger\" />
+    <Folder Include="src\MapCore\WorldCore\" />
   </ItemGroup>
   <ItemGroup>
     <Compile Remove="addons\.venv\**" />

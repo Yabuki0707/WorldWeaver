@@ -1,4 +1,5 @@
 using System;
+using WorldWeaver.ModCore;
 using WorldWeaver.ModSystem;
 using WorldWeaver.Systems;
 
@@ -10,9 +11,14 @@ namespace WorldWeaver
     public interface IGameManager
     {
         /// <summary>
+        /// 全局静态单例。由 GameManager 构造时注入。
+        /// </summary>
+        static IGameManager Instance { get; set; }
+
+        /// <summary>
         /// 全局 System 容器，用于查询与订阅全局 System 生命周期。
         /// </summary>
-        IGlobalSystemsManager Systems { get; }
+        IGlobalSystemManager Systems { get; }
 
         /// <summary>
         /// Mod 管理器，用于查询已加载模组与模组信息。
