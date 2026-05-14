@@ -1,14 +1,14 @@
 using System.Collections.Generic;
 using Godot;
-using WorldWeaver.MapCore.ChunkCore;
-using WorldWeaver.MapCore.ChunkCore.State;
-using WorldWeaver.MapCore.TileCore;
-using WorldWeaver.MapCore.TileCore.Manger;
+using WorldWeaver.Map.ChunkCore;
+using WorldWeaver.Map.ChunkCore.State;
+using WorldWeaver.Map.TileCore;
+using WorldWeaver.Map.TileCore.Manger;
 using WorldWeaver.PixelShapeSystem.PointsShape;
 using WorldWeaver.PixelShapeSystem.QuadrangleShape;
 using WorldWeaver.PixelShapeSystem.ValueShape;
-using MapLayer = WorldWeaver.MapCore.LayerCore.MapLayer;
-using MapVisualLayer = WorldWeaver.MapCore.LayerCore.MapVisualLayer;
+using MapLayer = WorldWeaver.Map.LayerCore.MapLayer;
+using MapVisualLayer = WorldWeaver.Map.LayerCore.MapVisualLayer;
 
 
 /// <summary>
