@@ -2,7 +2,7 @@
 <project version="4">
   <component name="UserContentModel">
     <attachedFolders>
-      <Path>addons/PixelShapeSystem</Path>
+      <Path>tests</Path>
     </attachedFolders>
     <explicitIncludes>
       <Path>ARCHITECTURE.md</Path>
@@ -16,6 +16,7 @@
       <Path>src/MapSystem/PositionConverter/GlobalPositionSizeConverter.cs</Path>
       <Path>src/MapSystem/README.md</Path>
       <Path>src/MapSystem/World.cs.uid</Path>
+      <Path>tests</Path>
     </explicitIncludes>
     <explicitExcludes>
       <Path>addons/.venv</Path>

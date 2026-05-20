@@ -1,25 +1,15 @@
 using System;
+using System.Collections.Frozen;
 using System.Collections.Generic;
-using Godot;
 
 namespace WorldWeaver.Systems
 {
     /// <summary>
-    /// 全局 System 容器。通过 IGlobalSystemManager 继承 IGameSystem 获得 SystemName 与 VisitSystem，
-    /// 无需显式实现 IGameSystem 成员。
+    /// 全局 System 容器。继承 SystemContainerBase 获得拓扑排序流水线，
+    /// 实现 IGlobalSystemManager 暴露全局 System 特有事件。
     /// </summary>
-    public class GlobalSystemManager : IGlobalSystemManager
+    public class GlobalSystemManager : SystemContainerBase<IGlobalSystem>, IGlobalSystemManager
     {
-        /// <summary>
-        /// 声明表，Key 为 SystemName。TryAdd 保证先到先得。
-        /// </summary>
-        private readonly Dictionary<string, IGlobalSystem> _declared = new();
-
-        /// <summary>
-        /// 系统表，初始化完成后可供查询。Key 为 SystemName。
-        /// </summary>
-        private readonly Dictionary<string, IGlobalSystem> _systemTable = new();
-
         // ================================================================================
         //                           IGameSystem — 继承自 IGlobalSystemManager
         // ================================================================================
@@ -28,6 +18,21 @@ namespace WorldWeaver.Systems
         /// 容器自身的 SystemName，用作 VisitSystem 及 ResolveFor 的 visitor 身份标识。
         /// </summary>
         public string SystemName => "GlobalSystemManager";
+
+        /// <summary>
+        /// 容器无前置依赖，恒为 true。
+        /// </summary>
+        public bool IsPrerequisitesGenerated => true;
+
+        /// <summary>
+        /// 容器无前置依赖，恒为空。
+        /// </summary>
+        public ReadOnlyMemory<string> Prerequisites => ReadOnlyMemory<string>.Empty;
+
+        /// <summary>
+        /// 容器无前置依赖，恒为空。
+        /// </summary>
+        public FrozenSet<string> PrerequisiteSet => FrozenSet<string>.Empty;
 
         /// <summary>
         /// 容器卸载——与游戏进程同生命周期，占位。
@@ -51,127 +56,38 @@ namespace WorldWeaver.Systems
         public event Action GlobalSystemsInitialized;
 
         // ================================================================================
-        //                                   属性
+        //                              初始化入口
         // ================================================================================
 
         /// <summary>
-        /// 是否已完成初始化。初始化后拒绝新的 System 注册。
-        /// </summary>
-        public bool IsInitialized { get; private set; }
-
-        /// <summary>
-        /// 系统表中已注册的 System 数量。
-        /// </summary>
-        public int Count => _systemTable.Count;
-
-        /// <summary>
-        /// 检查指定名称的 System 是否在系统表中。
-        /// </summary>
-        public bool ContainsKey(string systemName)
-        {
-            return _systemTable.ContainsKey(systemName);
-        }
-
-        // ================================================================================
-        //                           System 间查询（枢纽）
-        // ================================================================================
-
-        /// <summary>
-        /// 替 visitor 解析 target——一切 System 查询的唯一枢纽。visitor 仅 IGameSystem 可调用。
-        /// </summary>
-        public IGlobalSystem ResolveFor(IGameSystem visitor, string target)
-        {
-            if (visitor == null)
-            {
-                GD.PushError($"[GlobalSystemManager]:ResolveFor 的 visitor 为 null，查询 {target} 被拒绝。");
-                return null;
-            }
-
-            _systemTable.TryGetValue(target, out IGlobalSystem system);
-            return system;
-        }
-
-        /// <summary>
-        /// System 间查询索引器，直接委托 ResolveFor。
-        /// </summary>
-        public IGlobalSystem this[IGameSystem visitor, string target] => ResolveFor(visitor, target);
-
-        // ================================================================================
-        //                              注册与初始化
-        // ================================================================================
-
-        /// <summary>
-        /// 注入一个全局 System 到声明表。
-        /// 若已初始化则拒绝注入。同名的 System 先到先得。
-        /// </summary>
-        public void Register(IGlobalSystem system)
-        {
-            if (IsInitialized)
-            {
-                return;
-            }
-
-            _declared.TryAdd(system.SystemName, system);
-        }
-
-        /// <summary>
-        /// 执行完整的初始化流程：
-        /// <para>1. 广播 GlobalSystemRegistering 事件（收集声明表）</para>
-        /// <para>2. 调用各 System 的 GetGlobalSystemPrerequisites 构建注册表</para>
-        /// <para>3. 拓扑排序</para>
-        /// <para>4. 按序逐个调用 IGlobalSystem.Initialize，同时填充系统表</para>
-        /// <para>5. 标记 IsInitialized，清空声明表</para>
-        /// <para>6. 广播 GlobalSystemsInitialized</para>
+        /// 执行完整的初始化流程：广播 GlobalSystemRegistering → 声明表→注册表→拓扑排序→逐个 Initialize → 广播 GlobalSystemsInitialized。
         /// </summary>
         public void Initialize()
         {
-            GlobalSystemRegistering?.Invoke(this);
+            InitializeCore(
+                () => GlobalSystemRegistering?.Invoke(this),
+                () => GlobalSystemsInitialized?.Invoke());
+        }
 
-            Dictionary<IGlobalSystem, string[]> registrationTable = BuildRegistrationTable();
+        // ================================================================================
+        //                              子类钩子实现
+        // ================================================================================
 
-            List<IGlobalSystem> sorted = TopologicalSort(registrationTable);
 
-            foreach (IGlobalSystem entry in sorted)
-            {
-                entry.Initialize(_systemTable);
-                _systemTable[entry.SystemName] = entry;
-            }
-
-            IsInitialized = true;
-            _declared.Clear();
-
-            GlobalSystemsInitialized?.Invoke();
+        /// <summary>
+        /// 委托至 IGlobalSystem.GenerateGlobalSystemPrerequisites，传入当前声明表。
+        /// </summary>
+        protected override bool GenerateSystemPrerequisites(IGlobalSystem system)
+        {
+            return system.GenerateGlobalSystemPrerequisites(Declared);
         }
 
         /// <summary>
-        /// 遍历声明表，调用各 System 的 GetGlobalSystemPrerequisites 构建注册表。
-        /// 声明表类型与入参一致，无需包装转换。
+        /// 委托至 IGlobalSystem.Initialize，传入当前注册表，返回是否初始化成功。
         /// </summary>
-        private Dictionary<IGlobalSystem, string[]> BuildRegistrationTable()
+        protected override bool InitializeSystem(IGlobalSystem system, ISystemRegistrationSequence<IGlobalSystem> registry)
         {
-            Dictionary<IGlobalSystem, string[]> registrationTable = new();
-            foreach (IGlobalSystem system in _declared.Values)
-            {
-                string[] prerequisites = system.GetGlobalSystemPrerequisites(_declared);
-                registrationTable[system] = prerequisites;
-            }
-
-            return registrationTable;
-        }
-
-        /// <summary>
-        /// 对注册表进行拓扑排序，检测环依赖或缺失前置则报错。
-        /// </summary>
-        private List<IGlobalSystem> TopologicalSort(Dictionary<IGlobalSystem, string[]> registrationTable)
-        {
-            // TODO: 实现拓扑排序
-            List<IGlobalSystem> sorted = new();
-            foreach (KeyValuePair<IGlobalSystem, string[]> pair in registrationTable)
-            {
-                sorted.Add(pair.Key);
-            }
-
-            return sorted;
+            return system.Initialize(registry);
         }
     }
 }

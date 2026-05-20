@@ -1,7 +1,7 @@
 # 代码风格规定
 
-**版本：1.1**  
-**出版时间：2026年3月22日**
+**版本：1.2**
+**日期：2026-05-20**
 
 ## 1. 功能分组注释块
 
@@ -142,7 +142,13 @@ if (condition){//应当放在新行❌❌❌
 // 其他代码...
 ```
 
-微软官方说法出处:
+**微软官方说法出处:**
 
 https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/coding-style/coding-conventions?spm=5176.28103460.0.0.38f97d83YB5mYP#brace-placement
+
+
+## 6. 局部函数优先
+
+私有方法仅一处调用时，就地改为局部函数。一眼看完，不用跳转。
+
 

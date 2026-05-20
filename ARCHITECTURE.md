@@ -14,28 +14,31 @@ GameManager (场景根 Node : IGameManager)
 ├── ModManager : IModManager
 │   └── 扫描 mods/{mod}/ 目录，加载 vanilla 与社区模组
 │
-├── Systems: GlobalSystemsManager : IGlobalSystemsManager
-│   ├── SaveManager      ← 香草注册，管理存档生命周期
+├── Systems: GlobalSystemManager : IGlobalSystemManager
+│   ├── SaveManager      ← 全局 System，管理存档生命周期（非 Node，入系统表）
 │   └── ... (模组可注入)
 │
 └── 事件流
-    ├── GlobalSystemRegistering   ← 容器广播，参数为 IGlobalSystemsManager 自身
+    ├── GlobalSystemRegistering   ← 容器广播，参数为 IGlobalSystemManager 自身
     └── GlobalSystemsInitialized  ← 容器广播，全部就绪
 ```
 
-节点树结构：
+Godot 节点树结构：
 
 ```
 GameManager              ← 场景根 Node，静态单例
-  └── SaveManager        ← 全局 System，管理存档生命周期
-        └── Save[]       ← 每个存档一个实例
-              ├── Systems: SaveSystemsManager  ← 存档级 System 容器
-              ├── World[]                     ← 存档内可切换多个世界
-              │     └── Layer[]               ← 每个世界由多个图层组成
-              └── 存档事件 (SaveReady / SaveUnloading)
+  └── Save[]             ← 每个存档一个 Node 实例，由 SaveManager 动态创建/销毁
+        ├── Systems: SaveSystemGroup    ← 存档级 System 容器（不入节点树）
+        ├── World[]                     ← 存档内可切换多个世界
+        │     └── Layer[]               ← 每个世界由多个图层组成
+        └── 存档事件 (SaveReady / SaveUnloading)
 ```
 
-> System 容器仅存在于全局和存档两级。World/Layer 是游戏对象，不设 System 容器。
+> SaveManager 是全局 System，存在于 GlobalSystemManager 的系统表中，不是 Godot Node。
+> Save 才是 GameManager 的直接子节点。System 容器不入节点树。
+
+> System 容器仅存在于全局和存档两级，不入 Godot 节点树。World/Layer 是游戏对象，不设 System 容器。
+> SaveManager 是注册进 GlobalSystemManager 系统表的 IGlobalSystem，不是 Node。
 
 ---
 

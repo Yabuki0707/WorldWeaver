@@ -8,13 +8,14 @@ namespace WorldWeaver.Systems
     public interface ISaveSystem : IGameSystem
     {
         /// <summary>
-        /// 一次性声明前置依赖。传入当前已声明的存档级 System 表，返回依赖名称。
+        /// 一次性生成前置依赖并填入 Prerequisites / PrerequisiteSet、置位 IsPrerequisitesGenerated。
+        /// 若已生成或生成失败（如不满足特殊要求）则返回 false，不做任何操作。
         /// </summary>
-        string[] GetSaveSystemPrerequisites(Dictionary<string, ISaveSystem> declaredSystems);
+        bool GenerateSaveSystemPrerequisites(IReadOnlyDictionary<string, ISaveSystem> declaredSystems);
 
         /// <summary>
         /// 初始化本 System。传入的注册表完整包含所有前置依赖。
         /// </summary>
-        void Initialize(Dictionary<string, ISaveSystem> registry);
+        bool Initialize(ISystemRegistrationSequence<ISaveSystem> registry);
     }
 }
