@@ -1,11 +1,10 @@
 using System;
 using System.Collections.Frozen;
-using System.Collections.Generic;
 
 namespace WorldWeaver.Systems
 {
     /// <summary>
-    /// 全局 System 容器。继承 SystemContainerBase 获得拓扑排序流水线，
+    /// 全局 System 容器。继承 SystemContainerBase 获得 Kahn 拓扑排序流水线，
     /// 实现 IGlobalSystemManager 暴露全局 System 特有事件。
     /// </summary>
     public class GlobalSystemManager : SystemContainerBase<IGlobalSystem>, IGlobalSystemManager
@@ -60,7 +59,7 @@ namespace WorldWeaver.Systems
         // ================================================================================
 
         /// <summary>
-        /// 执行完整的初始化流程：广播 GlobalSystemRegistering → 声明表→注册表→拓扑排序→逐个 Initialize → 广播 GlobalSystemsInitialized。
+        /// 执行完整的初始化流程：广播 GlobalSystemRegistering → 声明表筛选 → 注册器初始化 → 广播 GlobalSystemsInitialized。
         /// </summary>
         public void Initialize()
         {
@@ -73,7 +72,6 @@ namespace WorldWeaver.Systems
         //                              子类钩子实现
         // ================================================================================
 
-
         /// <summary>
         /// 委托至 IGlobalSystem.GenerateGlobalSystemPrerequisites，传入当前声明表。
         /// </summary>
@@ -83,11 +81,11 @@ namespace WorldWeaver.Systems
         }
 
         /// <summary>
-        /// 委托至 IGlobalSystem.Initialize，传入当前注册表，返回是否初始化成功。
+        /// 委托至 IGlobalSystem.Initialize，传入当前注册器，返回是否初始化成功。
         /// </summary>
-        protected override bool InitializeSystem(IGlobalSystem system, ISystemRegistrationSequence<IGlobalSystem> registry)
+        protected override bool InitializeSystem(IGlobalSystem system, ISystemRegistrar<IGlobalSystem> registrar)
         {
-            return system.Initialize(registry);
+            return system.Initialize(registrar);
         }
     }
 }

@@ -3,15 +3,15 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cn5njjw818s4u"
-path="res://.godot/imported/ChunkStateFlow.png-080c7bf024e843255870df614a11807e.ctex"
+path="res://.godot/imported/ChunkStateFlow.png-e2f1ba200e52eab1d94192c7d280acba.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://src/MapCore/ChunkCore/State/ChunkStateFlow.png"
-dest_files=["res://.godot/imported/ChunkStateFlow.png-080c7bf024e843255870df614a11807e.ctex"]
+source_file="res://src/Map/ChunkCore/State/ChunkStateFlow.png"
+dest_files=["res://.godot/imported/ChunkStateFlow.png-e2f1ba200e52eab1d94192c7d280acba.ctex"]
 
 [params]
 

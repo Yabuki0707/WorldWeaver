@@ -19,12 +19,12 @@ namespace WorldWeaver.Systems
         /// <summary>
         /// 检查指定名称的 System 是否在系统表中。
         /// </summary>
-        bool ContainsKey(string systemName);
+        bool IsRegistered(string systemName);
 
         /// <summary>
-        /// 注入一个 System 到声明表。同名的 System 先到先得。
+        /// 声明表。外部通过 + 运算符向其中添加 System。
         /// </summary>
-        void Register(TSystem system);
+        ISystemDeclarationTable<TSystem> Declared { get; }
 
         /// <summary>
         /// 替 visitor 解析 target——一切 System 查询的唯一枢纽。

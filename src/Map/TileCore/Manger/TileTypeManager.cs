@@ -28,7 +28,7 @@ namespace WorldWeaver.Map.TileCore.Manger
         /// <para>在 <see cref="Initialize"/> 前可通过 <c>+=</c> 追加输入路径。</para>
         /// </summary>
         public static TileTypeInitializer Initializer { get; } = new TileTypeInitializer()
-            + ProjectSettings.GlobalizePath("res://assets/tiles");
+            + ProjectSettings.GlobalizePath("res://config/TileTypes");
 
         /// <summary>
         /// TileTypeManager 是否已经完成初始化。

@@ -11,11 +11,11 @@ namespace WorldWeaver.Systems
         /// 一次性生成前置依赖并填入 Prerequisites / PrerequisiteSet、置位 IsPrerequisitesGenerated。
         /// 若已生成则返回 false 且不做任何操作。
         /// </summary>
-        bool GenerateGlobalSystemPrerequisites(IReadOnlyDictionary<string, IGlobalSystem> declaredSystems);
+        bool GenerateGlobalSystemPrerequisites(ISystemDeclarationTable<IGlobalSystem> declaredSystems);
 
         /// <summary>
-        /// 初始化本 System。传入的注册表完整包含所有前置依赖。
+        /// 初始化本 System。传入的注册器完整包含所有已就位的前置依赖。
         /// </summary>
-        bool Initialize(ISystemRegistrationSequence<IGlobalSystem> registry);
+        bool Initialize(ISystemRegistrar<IGlobalSystem> registry);
     }
 }

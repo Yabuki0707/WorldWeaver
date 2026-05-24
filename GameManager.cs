@@ -51,7 +51,7 @@ namespace WorldWeaver
 		}
 
 		/// <summary>
-		/// 引擎入口。初始化容器 → 反射收集 [VanillaGlobalSystem] → 注册 → 启动。
+		/// 引擎入口。初始化容器 → 反射发现香草 IGlobalSystem → 注册 → 启动。
 		/// </summary>
 		public override void _Ready()
 		{
@@ -59,15 +59,24 @@ namespace WorldWeaver
 			Systems = systemsManager;
 			ModManager = new ModManager();
 
-			IReadOnlyList<IGlobalSystem> vanillaSystems = GetVanillaGlobalSystemInstances();
-			foreach (IGlobalSystem system in vanillaSystems)
-			{
-				systemsManager.GlobalSystemRegistering += manager => manager.Register(system);
-			}
+			RegisterVanillaGlobalSystems(systemsManager);
 
-			// 模组加载与注册（待 ModManager 完善后在此处接入）
+			// 模组 DLL 由 ModManager 加载后，再次反射发现模组 System（待实现）
 
 			systemsManager.Initialize();
+		}
+
+		/// <summary>
+		/// 反射发现香草 IGlobalSystem 并订阅 GlobalSystemRegistering 事件，
+		/// 在事件触发时将各 System 注入声明表。
+		/// </summary>
+		private static void RegisterVanillaGlobalSystems(GlobalSystemManager systemsManager)
+		{
+			IReadOnlyList<IGlobalSystem> vanillaSystems = DiscoverVanillaGlobalSystems();
+			foreach (IGlobalSystem system in vanillaSystems)
+			{
+				systemsManager.GlobalSystemRegistering += _ => { SystemDeclarationTable<IGlobalSystem> unused = systemsManager.Declared + system; };
+			}
 		}
 
 		/// <summary>
@@ -79,10 +88,10 @@ namespace WorldWeaver
 		}
 
 		/// <summary>
-		/// 反射扫描当前程序集中标记了 <see cref="VanillaGlobalSystemAttribute"/> 的 IGlobalSystem 实现，
-		/// 实例化并返回。
+		/// 反射扫描主程序集中标记了 <see cref="GlobalSystemAttribute"/> 的 IGlobalSystem 实现，实例化并返回。
+		/// <para>仅负责香草 System。模组 System 由 ModManager 加载 DLL 后重新反射发现。</para>
 		/// </summary>
-		private static IReadOnlyList<IGlobalSystem> GetVanillaGlobalSystemInstances()
+		private static IReadOnlyList<IGlobalSystem> DiscoverVanillaGlobalSystems()
 		{
 			List<IGlobalSystem> systems = new();
 
@@ -98,7 +107,7 @@ namespace WorldWeaver
 					continue;
 				}
 
-				if (type.GetCustomAttribute<VanillaGlobalSystemAttribute>() == null)
+				if (type.GetCustomAttribute<GlobalSystemAttribute>() == null)
 				{
 					continue;
 				}
