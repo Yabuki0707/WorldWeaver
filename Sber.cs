@@ -243,7 +243,7 @@ public partial class Sber : Node2D
 
 		// 使用静态点序列与目标稳定状态列表构造完整快照式请求表。
 		ChunkLoadRequestTable requestTable = ChunkLoadRequestTable.Create(
-			new PixelValuesListShape<ChunkStateNode>(
+			new PixelValueListShape<PointSequenceShape, ChunkStateNode>(
 				new PointSequenceShape(_requestedChunkPositions),
 				_requestedChunkStates));
 		if (requestTable == null)
@@ -311,7 +311,7 @@ public partial class Sber : Node2D
 			RIGHT_CLICK_TILE_HALF_EXTENT * 2 + 1,
 			rectangleOrigin);
 
-		_ownerMapLayer.TheChunkManager.DataOperator.SetTiles(new TileRegion(rectangleShape, _deepSeaTileRunId));
+		_ownerMapLayer.TheChunkManager.DataOperator.SetTiles(new TileValueShape(new PixelUniform<RectangleShape, int>(rectangleShape, _deepSeaTileRunId)));
 	}
 
 	/// <summary>

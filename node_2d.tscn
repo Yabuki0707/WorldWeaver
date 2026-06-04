@@ -1,11 +1,11 @@
 [gd_scene format=3 uid="uid://uacecvlewquu"]
 
-[ext_resource type="Script" uid="uid://b388piwopmo5n" path="res://src/MapSystem/LayerSystem/MapLayer.cs" id="1_0hol4"]
+[ext_resource type="Script" uid="uid://b388piwopmo5n" path="res://src/Map/LayerCore/MapLayer.cs" id="1_0hol4"]
 [ext_resource type="Texture2D" uid="uid://2gpatcjy12xb" path="res://assets/pixel-art.png" id="2_kdubu"]
-[ext_resource type="Script" uid="uid://u4pn22b7w67d" path="res://src/MapSystem/LayerSystem/MapVisualLayer.cs" id="2_q6r6c"]
+[ext_resource type="Script" uid="uid://u4pn22b7w67d" path="res://src/Map/LayerCore/MapVisualLayer.cs" id="2_q6r6c"]
 [ext_resource type="Script" uid="uid://dv77unxaxamqq" path="res://Sber.cs" id="3_kdubu"]
 [ext_resource type="Texture2D" uid="uid://cmdtva7tta5q0" path="res://icon.svg" id="4_d21ai"]
-[ext_resource type="Script" uid="uid://2s18e2t4gc4h" path="res://icon_3.gd" id="6_kdubu"]
+[ext_resource type="Script" uid="uid://dp2sdoalwuxwt" path="res://icon_3.gd" id="6_kdubu"]
 
 [sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_q6r6c"]
 resource_name = "a"

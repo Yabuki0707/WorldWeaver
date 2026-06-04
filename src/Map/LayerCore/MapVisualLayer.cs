@@ -235,7 +235,7 @@ namespace WorldWeaver.Map.LayerCore
             }
             Vector2I originGlobalTilePosition = chunkPosition.GetOriginGlobalTilePosition(OwnerLayer);
             // 双层循环遍历区块内全部局部坐标，并将每个 Tile 写入对应的全局格子。
-            for (int localY = 0; localY < OwnerLayer.ChunkSize.Height; localY++)
+            for (int localY = 0; localY < OwnerLayer.ChunkSize.Width; localY++)
             {
                 for (int localX = 0; localX < OwnerLayer.ChunkSize.Height; localX++)
                 {
@@ -256,7 +256,7 @@ namespace WorldWeaver.Map.LayerCore
         /// <para>Set / Restore 直接使用 TileValueShape 中的 runId。</para>
         /// <para>Remove / Delete 直接将命中格子清空。</para>
         /// </summary>
-        public void RenderTileShape(TileValuesArrayShape tileValueShape, TileChangeType changeType)
+        public void RenderTileShape(TileValueShape tileValueShape, TileChangeType changeType)
         {
             // 没有有效变更形状时无需处理。
             if (tileValueShape == null)
@@ -282,13 +282,15 @@ namespace WorldWeaver.Map.LayerCore
         /// <summary>
         /// 使用 TileValueShape 中自带的 runId 直接刷新命中的格子。
         /// </summary>
-        private void RenderTileShapeByValues(TileValuesArrayShape tileValueShape)
+        private void RenderTileShapeByValues(TileValueShape tileValueShape)
         {
             // Set / Restore 的事件结果已经携带最终 runId，这里按点序直接写入即可。
-            foreach ((Vector2I globalTilePosition, int valueIndex) in tileValueShape.GetGlobalValueIndexIterator())
+            int valueIndex = -1;
+            foreach (Vector2I globalTilePosition in tileValueShape.ValueShape.Shape.GetGlobalCoordinateIterator())
             {
+                valueIndex++;
                 // 通过索引访问与坐标严格对齐的 runId，避免额外查找和中间映射。
-                int tileRunId = tileValueShape.TileRunIds[valueIndex];
+                int tileRunId = tileValueShape[valueIndex];
                 ApplyTileToCell(globalTilePosition, tileRunId);
             }
         }
@@ -296,10 +298,10 @@ namespace WorldWeaver.Map.LayerCore
         /// <summary>
         /// 将 shape 命中的格子直接清空。
         /// </summary>
-        private void ClearTileShape(TileValuesArrayShape tileValueShape)
+        private void ClearTileShape(TileValueShape tileValueShape)
         {
             // Remove / Delete 不需要读取值，直接对命中的所有全局坐标执行清除即可。
-            foreach (Vector2I globalTilePosition in tileValueShape.Shape.GetGlobalCoordinateIterator())
+            foreach (Vector2I globalTilePosition in tileValueShape.ValueShape.Shape.GetGlobalCoordinateIterator())
             {
                 ApplyTileToCell(globalTilePosition, 0);
             }

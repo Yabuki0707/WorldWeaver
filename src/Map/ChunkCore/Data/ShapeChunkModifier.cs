@@ -1,6 +1,7 @@
 using Godot;
 using WorldWeaver.Map.TileCore;
 using WorldWeaver.PixelShapeSystem;
+using WorldWeaver.PixelShapeSystem.ValueShape;
 
 namespace WorldWeaver.Map.ChunkCore.Data
 {
@@ -19,13 +20,15 @@ namespace WorldWeaver.Map.ChunkCore.Data
         /// <summary>
         /// 按 shape 读取命中点值（只读操作）。
         /// </summary>
-        internal static TileValuesArrayShape GetTiles(PixelShape shape, IShapeChunkReadStrategy readStrategy, MapElementSize chunkSize)
+        internal static TileValueShape GetTiles(PixelShape shape, IShapeChunkReadStrategy readStrategy, MapElementSize chunkSize)
         {
-            TileValuesArrayShape resultShape = CreateResultTileValueShape(shape);
+            TileValueShape resultShape = CreateResultTileValueShape(shape);
 
             // 使用坐标与值索引迭代器原地写回，未命中项默认保持 0。
-            foreach ((Vector2I globalPosition, int valueIndex) in resultShape.GetGlobalValueIndexIterator())
+            int valueIndex = -1;
+            foreach (Vector2I globalPosition in resultShape.ValueShape.Shape.GetGlobalCoordinateIterator())
             {
+                valueIndex++;
                 if (!TryResolveChunkDataAndTileIndex(
                         globalPosition,
                         readStrategy,
@@ -36,22 +39,24 @@ namespace WorldWeaver.Map.ChunkCore.Data
                     continue;
                 }
 
-                resultShape.TileRunIds[valueIndex] = chunkData.GetTileSingleUnchecked(tileIndex);
+                resultShape[valueIndex] = chunkData.GetTileSingleUnchecked(tileIndex);
             }
 
             return resultShape;
         }
 
         /// <summary>
-        /// 按统一值执行设置。
+        /// 按值 shape 执行设置。
+        /// <para>统一值、数组值、列表值均通过 <see cref="TileValueShape"/> 索引器统一读取。</para>
         /// </summary>
-        internal static TileValuesArrayShape SetTiles(TileRegion tileRegion, IShapeChunkReadStrategy readStrategy, MapElementSize chunkSize)
+        internal static TileValueShape SetTiles(TileValueShape tileValueShape, IShapeChunkReadStrategy readStrategy, MapElementSize chunkSize)
         {
-            TileValuesArrayShape resultShape = CreateResultTileValueShape(tileRegion.Shape);
+            TileValueShape resultShape = CreateResultTileValueShape(tileValueShape.ValueShape.Shape);
 
-            // 逐点映射并原子写入：未命中项保留 0，命中项写入最终结果值。
-            foreach ((Vector2I globalPosition, int valueIndex) in resultShape.GetGlobalValueIndexIterator())
+            int valueIndex = -1;
+            foreach (Vector2I globalPosition in resultShape.ValueShape.Shape.GetGlobalCoordinateIterator())
             {
+                valueIndex++;
                 if (!TryResolveChunkDataAndTileIndex(
                         globalPosition,
                         readStrategy,
@@ -62,35 +67,7 @@ namespace WorldWeaver.Map.ChunkCore.Data
                     continue;
                 }
 
-                resultShape.TileRunIds[valueIndex] = chunkData.SetTileSingleUnchecked(tileIndex, tileRegion.TileRunId);
-            }
-
-            return resultShape;
-        }
-
-        /// <summary>
-        /// 按逐点值执行设置。
-        /// </summary>
-        internal static TileValuesArrayShape SetTiles(TileValuesArrayShape tileValueShape, IShapeChunkReadStrategy readStrategy, MapElementSize chunkSize)
-        {
-            TileValuesArrayShape resultShape = CreateResultTileValueShape(tileValueShape.Shape);
-
-            // 逐点映射并原子写入：输入值按同一点序读取，未命中项结果保留 0。
-            foreach ((Vector2I globalPosition, int valueIndex) in resultShape.GetGlobalValueIndexIterator())
-            {
-                int sourceTileRunId = tileValueShape.TileRunIds[valueIndex];
-
-                if (!TryResolveChunkDataAndTileIndex(
-                        globalPosition,
-                        readStrategy,
-                        chunkSize,
-                        out ChunkData chunkData,
-                        out int tileIndex))
-                {
-                    continue;
-                }
-
-                resultShape.TileRunIds[valueIndex] = chunkData.SetTileSingleUnchecked(tileIndex, sourceTileRunId);
+                resultShape[valueIndex] = chunkData.SetTileSingleUnchecked(tileIndex, tileValueShape[valueIndex]);
             }
 
             return resultShape;
@@ -99,13 +76,15 @@ namespace WorldWeaver.Map.ChunkCore.Data
         /// <summary>
         /// 按 shape 逻辑移除。
         /// </summary>
-        internal static TileValuesArrayShape RemoveTiles(PixelShape shape, IShapeChunkReadStrategy readStrategy, MapElementSize chunkSize)
+        internal static TileValueShape RemoveTiles(PixelShape shape, IShapeChunkReadStrategy readStrategy, MapElementSize chunkSize)
         {
-            TileValuesArrayShape resultShape = CreateResultTileValueShape(shape);
+            TileValueShape resultShape = CreateResultTileValueShape(shape);
 
             // 逐点映射并原子移除：未命中项保留 0，命中项记录移除后的最终值。
-            foreach ((Vector2I globalPosition, int valueIndex) in resultShape.GetGlobalValueIndexIterator())
+            int valueIndex = -1;
+            foreach (Vector2I globalPosition in resultShape.ValueShape.Shape.GetGlobalCoordinateIterator())
             {
+                valueIndex++;
                 if (!TryResolveChunkDataAndTileIndex(
                         globalPosition,
                         readStrategy,
@@ -116,7 +95,7 @@ namespace WorldWeaver.Map.ChunkCore.Data
                     continue;
                 }
 
-                resultShape.TileRunIds[valueIndex] = chunkData.RemoveTileSingleUnchecked(tileIndex);
+                resultShape[valueIndex] = chunkData.RemoveTileSingleUnchecked(tileIndex);
             }
 
             return resultShape;
@@ -125,13 +104,15 @@ namespace WorldWeaver.Map.ChunkCore.Data
         /// <summary>
         /// 按 shape 恢复。
         /// </summary>
-        internal static TileValuesArrayShape RestoreTiles(PixelShape shape, IShapeChunkReadStrategy readStrategy, MapElementSize chunkSize)
+        internal static TileValueShape RestoreTiles(PixelShape shape, IShapeChunkReadStrategy readStrategy, MapElementSize chunkSize)
         {
-            TileValuesArrayShape resultShape = CreateResultTileValueShape(shape);
+            TileValueShape resultShape = CreateResultTileValueShape(shape);
 
             // 逐点映射并原子恢复：未命中项保留 0，命中项记录恢复后的最终值。
-            foreach ((Vector2I globalPosition, int valueIndex) in resultShape.GetGlobalValueIndexIterator())
+            int valueIndex = -1;
+            foreach (Vector2I globalPosition in resultShape.ValueShape.Shape.GetGlobalCoordinateIterator())
             {
+                valueIndex++;
                 if (!TryResolveChunkDataAndTileIndex(
                         globalPosition,
                         readStrategy,
@@ -142,7 +123,7 @@ namespace WorldWeaver.Map.ChunkCore.Data
                     continue;
                 }
 
-                resultShape.TileRunIds[valueIndex] = chunkData.RestoreTileSingleUnchecked(tileIndex);
+                resultShape[valueIndex] = chunkData.RestoreTileSingleUnchecked(tileIndex);
             }
 
             return resultShape;
@@ -151,13 +132,15 @@ namespace WorldWeaver.Map.ChunkCore.Data
         /// <summary>
         /// 按 shape 彻底删除。
         /// </summary>
-        internal static TileValuesArrayShape DeleteTiles(PixelShape shape, IShapeChunkReadStrategy readStrategy, MapElementSize chunkSize)
+        internal static TileValueShape DeleteTiles(PixelShape shape, IShapeChunkReadStrategy readStrategy, MapElementSize chunkSize)
         {
-            TileValuesArrayShape resultShape = CreateResultTileValueShape(shape);
+            TileValueShape resultShape = CreateResultTileValueShape(shape);
 
             // 逐点映射并原子删除：未命中项保留 0，命中项记录删除后的最终值。
-            foreach ((Vector2I globalPosition, int valueIndex) in resultShape.GetGlobalValueIndexIterator())
+            int valueIndex = -1;
+            foreach (Vector2I globalPosition in resultShape.ValueShape.Shape.GetGlobalCoordinateIterator())
             {
+                valueIndex++;
                 if (!TryResolveChunkDataAndTileIndex(
                         globalPosition,
                         readStrategy,
@@ -168,7 +151,7 @@ namespace WorldWeaver.Map.ChunkCore.Data
                     continue;
                 }
 
-                resultShape.TileRunIds[valueIndex] = chunkData.DeleteTileSingleUnchecked(tileIndex);
+                resultShape[valueIndex] = chunkData.DeleteTileSingleUnchecked(tileIndex);
             }
 
             return resultShape;
@@ -183,9 +166,9 @@ namespace WorldWeaver.Map.ChunkCore.Data
         /// 根据输入 shape 创建同点序的结果 TileValueShape。
         /// <para>结果数组默认以 0 填充，表示未命中或禁用渲染。</para>
         /// </summary>
-        private static TileValuesArrayShape CreateResultTileValueShape(PixelShape shape)
+        private static TileValueShape CreateResultTileValueShape(PixelShape shape)
         {
-            return new TileValuesArrayShape(shape, new int[shape.PointCount]);
+            return new TileValueShape(new PixelValueArrayShape<PixelShape, int>(shape, new int[shape.PointCount]));
         }
 
         /// <summary>

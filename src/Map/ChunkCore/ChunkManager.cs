@@ -14,13 +14,13 @@ namespace WorldWeaver.Map.ChunkCore
     /// Tile 变化事件参数。
     /// <para>事件统一使用 <see cref="TileValueShape"/> 承载变化点与变化后的 TileRunId。</para>
     /// </summary>
-    public class TilesChangedEventArgs(TileValuesArrayShape tileValueShape, TileChangeType changeType) : EventArgs
+    public class TilesChangedEventArgs(TileValueShape tileValueShape, TileChangeType changeType) : EventArgs
     {
         /// <summary>
         /// 变化点形状与变化后的 TileRunId。
         /// <para>其中坐标使用全局坐标。</para>
         /// </summary>
-        public TileValuesArrayShape TileValueShape { get; } = tileValueShape;
+        public TileValueShape TileValueShape { get; } = tileValueShape;
 
         /// <summary>
         /// 变化类型。

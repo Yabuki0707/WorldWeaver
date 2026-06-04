@@ -2,6 +2,8 @@ using System;
 using Godot;
 using WorldWeaver.Map.TileCore;
 using WorldWeaver.PixelShapeSystem;
+using WorldWeaver.PixelShapeSystem.PointsShape;
+using WorldWeaver.PixelShapeSystem.ValueShape;
 
 namespace WorldWeaver.Map.ChunkCore.Data
 {
@@ -22,6 +24,16 @@ namespace WorldWeaver.Map.ChunkCore.Data
         private const int MAX_CACHED_CHUNK_RANGE_AREA = 256;
 
         /// <summary>
+        /// 空的带值结果。
+        /// </summary>
+        private static readonly TileValueShape _emptyValued = new(new PixelValueArrayShape<PointSequenceShape, int>(new PointSequenceShape(), Array.Empty<int>()));
+
+        /// <summary>
+        /// 空的仅坐标结果。
+        /// </summary>
+        private static readonly TileValueShape _emptyCoordinateOnly = new(new PixelValueArrayShape<PointSequenceShape, int>(new PointSequenceShape(), null));
+
+        /// <summary>
         /// 所属 chunk 管理器。
         /// </summary>
         private readonly ChunkManager _owner;
@@ -34,7 +46,7 @@ namespace WorldWeaver.Map.ChunkCore.Data
         /// <summary>
         /// 按全局 shape 读取已加载区块内命中的 Tile。
         /// </summary>
-        public TileValuesArrayShape GetTiles(PixelShape shape)
+        public TileValueShape GetTiles(PixelShape shape)
         {
             if (shape == null)
             {
@@ -43,7 +55,7 @@ namespace WorldWeaver.Map.ChunkCore.Data
 
             if (shape.PointCount == 0)
             {
-                return TileValuesArrayShape.EMPTY_VALUED;
+                return _emptyValued;
             }
 
             IShapeChunkReadStrategy readStrategy = CreateChunkReadStrategy(shape);
@@ -51,49 +63,28 @@ namespace WorldWeaver.Map.ChunkCore.Data
         }
 
         /// <summary>
-        /// 使用统一 TileRunId 对全局 shape 执行设置。
+        /// 使用值 shape 执行设置。统一值、数组值、列表值均通过 <see cref="TileValueShape"/> 索引器处理。
         /// </summary>
-        public TileValuesArrayShape SetTiles(TileRegion tileRegion)
-        {
-            if (tileRegion == null)
-            {
-                throw new ArgumentNullException(nameof(tileRegion));
-            }
-
-            if (tileRegion.Shape.PointCount == 0)
-            {
-                return TileValuesArrayShape.EMPTY_VALUED;
-            }
-
-            IShapeChunkReadStrategy readStrategy = CreateChunkReadStrategy(tileRegion.Shape);
-            TileValuesArrayShape totalResult = ShapeChunkModifier.SetTiles(tileRegion, readStrategy, _owner.OwnerLayer.ChunkSize);
-            NotifyTilesChanged(totalResult, TileChangeType.Set);
-            return totalResult;
-        }
-
-        /// <summary>
-        /// 使用逐点值 shape 执行设置。
-        /// </summary>
-        public TileValuesArrayShape SetTiles(TileValuesArrayShape tileValueShape)
+        public TileValueShape SetTiles(TileValueShape tileValueShape)
         {
             if (tileValueShape == null)
             {
                 throw new ArgumentNullException(nameof(tileValueShape));
             }
 
-            if (!tileValueShape.HasTileRunIds || !tileValueShape.IsAligned())
+            if (!tileValueShape.ValueShape.HasValues || !tileValueShape.ValueShape.IsAligned)
             {
-                GD.PushError("[ChunkSystem/ChunkDataOperator]: SetTiles(TileValueShape) 调用失败，输入对象必须携带与点序一致的 TileRunId 数组。");
-                return TileValuesArrayShape.EMPTY_VALUED;
+                GD.PushError("[ChunkSystem/ChunkDataOperator]: SetTiles 调用失败，输入对象必须携带与点序一致的 TileRunId 值。");
+                return _emptyValued;
             }
 
-            if (tileValueShape.Shape.PointCount == 0)
+            if (tileValueShape.ValueShape.Shape.PointCount == 0)
             {
-                return TileValuesArrayShape.EMPTY_VALUED;
+                return _emptyValued;
             }
 
-            IShapeChunkReadStrategy readStrategy = CreateChunkReadStrategy(tileValueShape.Shape);
-            TileValuesArrayShape totalResult = ShapeChunkModifier.SetTiles(tileValueShape, readStrategy, _owner.OwnerLayer.ChunkSize);
+            IShapeChunkReadStrategy readStrategy = CreateChunkReadStrategy(tileValueShape.ValueShape.Shape);
+            TileValueShape totalResult = ShapeChunkModifier.SetTiles(tileValueShape, readStrategy, _owner.OwnerLayer.ChunkSize);
             NotifyTilesChanged(totalResult, TileChangeType.Set);
             return totalResult;
         }
@@ -101,7 +92,7 @@ namespace WorldWeaver.Map.ChunkCore.Data
         /// <summary>
         /// 按全局 shape 逻辑移除 Tile。
         /// </summary>
-        public TileValuesArrayShape RemoveTiles(PixelShape shape)
+        public TileValueShape RemoveTiles(PixelShape shape)
         {
             if (shape == null)
             {
@@ -110,11 +101,11 @@ namespace WorldWeaver.Map.ChunkCore.Data
 
             if (shape.PointCount == 0)
             {
-                return TileValuesArrayShape.EMPTY_COORDINATE_ONLY;
+                return _emptyCoordinateOnly;
             }
 
             IShapeChunkReadStrategy readStrategy = CreateChunkReadStrategy(shape);
-            TileValuesArrayShape totalResult = ShapeChunkModifier.RemoveTiles(shape, readStrategy, _owner.OwnerLayer.ChunkSize);
+            TileValueShape totalResult = ShapeChunkModifier.RemoveTiles(shape, readStrategy, _owner.OwnerLayer.ChunkSize);
             NotifyTilesChanged(totalResult, TileChangeType.Remove);
             return totalResult;
         }
@@ -122,7 +113,7 @@ namespace WorldWeaver.Map.ChunkCore.Data
         /// <summary>
         /// 按全局 shape 恢复 Tile。
         /// </summary>
-        public TileValuesArrayShape RestoreTiles(PixelShape shape)
+        public TileValueShape RestoreTiles(PixelShape shape)
         {
             if (shape == null)
             {
@@ -131,11 +122,11 @@ namespace WorldWeaver.Map.ChunkCore.Data
 
             if (shape.PointCount == 0)
             {
-                return TileValuesArrayShape.EMPTY_VALUED;
+                return _emptyValued;
             }
 
             IShapeChunkReadStrategy readStrategy = CreateChunkReadStrategy(shape);
-            TileValuesArrayShape totalResult = ShapeChunkModifier.RestoreTiles(shape, readStrategy, _owner.OwnerLayer.ChunkSize);
+            TileValueShape totalResult = ShapeChunkModifier.RestoreTiles(shape, readStrategy, _owner.OwnerLayer.ChunkSize);
             NotifyTilesChanged(totalResult, TileChangeType.Restore);
             return totalResult;
         }
@@ -143,7 +134,7 @@ namespace WorldWeaver.Map.ChunkCore.Data
         /// <summary>
         /// 按全局 shape 彻底删除 Tile。
         /// </summary>
-        public TileValuesArrayShape DeleteTiles(PixelShape shape)
+        public TileValueShape DeleteTiles(PixelShape shape)
         {
             if (shape == null)
             {
@@ -152,11 +143,11 @@ namespace WorldWeaver.Map.ChunkCore.Data
 
             if (shape.PointCount == 0)
             {
-                return TileValuesArrayShape.EMPTY_COORDINATE_ONLY;
+                return _emptyCoordinateOnly;
             }
 
             IShapeChunkReadStrategy readStrategy = CreateChunkReadStrategy(shape);
-            TileValuesArrayShape totalResult = ShapeChunkModifier.DeleteTiles(shape, readStrategy, _owner.OwnerLayer.ChunkSize);
+            TileValueShape totalResult = ShapeChunkModifier.DeleteTiles(shape, readStrategy, _owner.OwnerLayer.ChunkSize);
             NotifyTilesChanged(totalResult, TileChangeType.Delete);
             return totalResult;
         }
@@ -242,9 +233,9 @@ namespace WorldWeaver.Map.ChunkCore.Data
         /// 将修改器返回的总结果转发到 ChunkManager 事件总线。
         /// <para>空形状不会触发事件。</para>
         /// </summary>
-        private void NotifyTilesChanged(TileValuesArrayShape tileValueShape, TileChangeType changeType)
+        private void NotifyTilesChanged(TileValueShape tileValueShape, TileChangeType changeType)
         {
-            if (tileValueShape == null || tileValueShape.Shape.PointCount == 0)
+            if (tileValueShape == null || tileValueShape.ValueShape.Shape.PointCount == 0)
             {
                 return;
             }

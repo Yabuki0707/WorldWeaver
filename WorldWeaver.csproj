@@ -45,7 +45,6 @@
     <Content Include="addons\PixelShapeSystem\PointsShape\README.md" />
     <Content Include="addons\PixelShapeSystem\README.md" />
     <Content Include="addons\Vector2IExtensions.cs.uid" />
-    <Content Include="ARCHITECTURE.md" />
     <Content Include="config\IGameManager.cs.uid" />
     <Content Include="config\TileTypes\deep_sea.json" />
     <Content Include="config\TileTypes\grass.json" />
@@ -126,12 +125,11 @@
     <Content Include="src\Map\TemporaryTerrainGenerator.cs.uid" />
     <Content Include="src\Map\TileCore\GlobalTilePositionConverter.cs.uid" />
     <Content Include="src\Map\TileCore\LocalTilePositionConverter.cs.uid" />
-    <Content Include="src\Map\TileCore\TileRegion.cs.uid" />
     <Content Include="src\Map\TileCore\TileType.cs.uid" />
-    <Content Include="src\Map\TileCore\TileTypeManager.cs.uid" />
     <Content Include="src\Map\TileCore\TileValuesArrayShape.cs.uid" />
     <Content Include="src\Map\TODO.md" />
     <Content Include="src\PROJECT_STANDARD.md" />
+    <Content Include="src\Systems\TODO.md" />
     <Content Include="StartGrund.tscn" />
   </ItemGroup>
   <ItemGroup>
